@@ -194,6 +194,8 @@ scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
 scripts/uninstall-addin.sh remove the sideloaded manifest
 scripts/rotate-token.sh    new token, rebuild + reinstall the manifest
+scripts/check-secrets.sh   fail if a token, key or secret file is tracked or in git history
+AGENTS.md                  instructions for coding agents (CLAUDE.md points here)
 manifest/template.xml      snapshot of Anthropic's add-in manifest (pivot.claude.ai/manifest.xml);
                            refresh with `node scripts/build-manifest.mjs --fetch`
 local/                     git-ignored: .token, certs/, manifest.xml, bridge.log

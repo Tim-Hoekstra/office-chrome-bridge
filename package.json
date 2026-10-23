@@ -11,6 +11,7 @@
     "manifest": "node scripts/build-manifest.mjs",
     "install-addin": "scripts/install-addin.sh",
     "uninstall-addin": "scripts/uninstall-addin.sh",
-    "rotate": "scripts/rotate-token.sh"
+    "rotate": "scripts/rotate-token.sh",
+    "check-secrets": "scripts/check-secrets.sh"
   }
 }
