@@ -1,0 +1,15 @@
+# Secrets and generated files: bridge token, TLS key/cert, built manifest (embeds the token), logs
+local/
+.token
+*.key
+*.pem
+*.crt
+*.p12
+.env
+.env.*
+manifest.xml
+*.log
+
+# OS / tooling
+.DS_Store
+node_modules/

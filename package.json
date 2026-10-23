@@ -1,0 +1,16 @@
+{
+  "name": "office-chrome-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Expose Claude in Chrome to the Claude for Office add-ins (Word, Excel, PowerPoint) as a localhost-only MCP server",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/bridge.mjs",
+    "cert": "scripts/make-cert.sh",
+    "manifest": "node scripts/build-manifest.mjs",
+    "install-addin": "scripts/install-addin.sh",
+    "uninstall-addin": "scripts/uninstall-addin.sh",
+    "rotate": "scripts/rotate-token.sh"
+  }
+}
