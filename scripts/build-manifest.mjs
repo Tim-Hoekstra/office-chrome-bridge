@@ -5,6 +5,7 @@
 //
 //   node scripts/build-manifest.mjs            # from manifest/template.xml
 //   node scripts/build-manifest.mjs --fetch    # refresh the template from pivot.claude.ai first
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,11 +33,15 @@ if (!existsSync(tokenFile)) {
   process.exit(1)
 }
 const token = readFileSync(tokenFile, 'utf8').trim()
+// Token-derived path segment: the add-in caches registrations per URL, so a new token
+// needs a new URL to be picked up (see KEY_ID in src/bridge.mjs).
+const keyId = createHash('sha256').update(token).digest('hex').slice(0, 12)
+const url = `https://localhost:${PORT}/mcp/${keyId}`
 
 const query = new URLSearchParams({ allow_1p: '1' })
 const fragment = new URLSearchParams({
   mcp_servers: JSON.stringify([
-    { url: `https://localhost:${PORT}/mcp`, label: 'Claude in Chrome', headers: { Authorization: `Bearer ${token}` } },
+    { url, label: 'Claude in Chrome', headers: { Authorization: `Bearer ${token}` } },
   ]),
 })
 const amp = s => s.replaceAll('&', '&amp;')   // XML attribute escaping
@@ -56,4 +61,4 @@ mkdirSync(LOCAL, { recursive: true, mode: 0o700 })
 writeFileSync(OUT, xml, { mode: 0o600 })
 chmodSync(OUT, 0o600)
 const version = xml.match(/<Version>([^<]+)<\/Version>/)?.[1]
-console.log(`wrote ${OUT} (add-in ${version}, bridge https://localhost:${PORT}/mcp). It contains the bridge token: keep it private.`)
+console.log(`wrote ${OUT} (add-in ${version}, bridge ${url}). It contains the bridge token: keep it private.`)

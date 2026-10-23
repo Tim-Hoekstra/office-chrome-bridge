@@ -4,7 +4,7 @@ Use **Claude in Chrome** from the **Claude for Word** add-in (also Excel and Pow
 
 The bridge runs `claude --claude-in-chrome-mcp` (Claude Code's built-in Claude in Chrome MCP
 server, which speaks stdio) and serves it as a Streamable HTTP MCP endpoint on
-`https://localhost:47823/mcp`. The add-in's `mcp_servers` setting points at that URL.
+`https://localhost:47823/mcp/<key-id>`. The add-in's `mcp_servers` setting points at that URL.
 
 ```
 Word taskpane (https://pivot.claude.ai, WebKit)
@@ -150,6 +150,11 @@ to a server. Keep it out of terminals, logs and chat transcripts you share.
 
 **Rotate the token:** `npm run rotate`, restart the bridge, then Cmd+Q and reopen Office.
 
+The URL ends in a `<key-id>` derived from the token (first 12 hex chars of its SHA-256). The add-in
+stores each MCP registration, headers included, in its own WebView storage, so a new token on the
+same URL would keep sending the old one (`401` in the log). A new token means a new URL, which the
+add-in registers fresh. `/mcp` without a key id still works for local testing with curl.
+
 ## Troubleshooting
 
 `local/bridge.log` (if started with `npm start >> local/bridge.log 2>&1`) or the terminal shows every request.
@@ -160,7 +165,8 @@ to a server. Keep it out of terminals, logs and chat transcripts you share.
 | Connector shows *Connection failed / Load failed*, only `OPTIONS` in the log | CORS preflight rejected; check `BRIDGE_ORIGINS` |
 | *Load failed*, nothing in the log | Cert not trusted (`npm run cert`) or bridge not running |
 | Permission prompt never shows / times out | Session is on another computer's Chrome; see [Multiple browsers](#multiple-browsers) |
-| `401` in the log | Token changed; `npm run rotate` (or rebuild + reinstall the manifest), restart the bridge, reopen Office |
+| `401` in the log | The add-in is sending an old token, usually a stored registration for a URL without the current key id. `npm run manifest && npm run install-addin`, restart the bridge, Cmd+Q and reopen Office |
+| `stale key id in URL` in the log | Token was rotated but Office still has the old manifest loaded; Cmd+Q and reopen Office |
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
 
