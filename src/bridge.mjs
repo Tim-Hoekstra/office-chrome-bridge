@@ -11,7 +11,7 @@
 //   BRIDGE_CERT/KEY  default local/certs/localhost.{crt,key}
 //   BRIDGE_TOKEN     default: contents of local/.token (generated on first run, mode 0600)
 //   BRIDGE_ORIGINS   default https://pivot.claude.ai (comma-separated)
-//   BRIDGE_TOOLS     `read` (default: read + navigate only), `all`, or a comma-separated list
+//   BRIDGE_TOOLS     `all` (default), `read` (read + navigate only), or a comma-separated list
 //   BRIDGE_BROWSER   deviceId to drive; default: the one connected browser on this computer
 //                    (several Chromes can be connected to one Claude account, incl. other PCs)
 //   BRIDGE_ALLOW_SKIP_PERMISSIONS=1  permit CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks
@@ -29,12 +29,12 @@ const HOST = process.env.BRIDGE_HOST || '127.0.0.1'
 const CERT = process.env.BRIDGE_CERT || join(LOCAL, 'certs', 'localhost.crt')
 const KEY = process.env.BRIDGE_KEY || join(LOCAL, 'certs', 'localhost.key')
 const ORIGINS = new Set((process.env.BRIDGE_ORIGINS || 'https://pivot.claude.ai').split(',').map(s => s.trim()).filter(Boolean))
-// Default exposure: read pages and move between them. Tools that act on a page as you
-// (javascript_tool, form_input, computer, file_upload, upload_image, shortcuts_execute,
-// browser_batch) and browser re-selection need BRIDGE_TOOLS=all or an explicit list.
+// All tools by default: the add-in asks the user to approve each MCP tool call. `read`
+// narrows it to reading pages and moving between them, without tools that act on a page
+// as you (javascript_tool, form_input, computer, file_upload, browser_batch, ...).
 const READ_TOOLS = ['tabs_context_mcp', 'tabs_create_mcp', 'tabs_close_mcp', 'navigate', 'get_page_text',
   'read_page', 'find', 'read_console_messages', 'read_network_requests', 'resize_window', 'list_connected_browsers']
-const TOOLS_SPEC = (process.env.BRIDGE_TOOLS || 'read').trim()
+const TOOLS_SPEC = (process.env.BRIDGE_TOOLS || 'all').trim()
 const TOOLS = TOOLS_SPEC === 'all' ? null
   : new Set(TOOLS_SPEC === 'read' ? READ_TOOLS : TOOLS_SPEC.split(',').map(s => s.trim()).filter(Boolean))
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude'

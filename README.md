@@ -72,7 +72,7 @@ Environment variables for `npm start`:
 | Variable | Default | |
 |---|---|---|
 | `BRIDGE_PORT` | `47823` | Rebuild + reinstall the manifest if you change it |
-| `BRIDGE_TOOLS` | `read` | Which tools Office can use: `read`, `all`, or a comma-separated list (see below) |
+| `BRIDGE_TOOLS` | `all` | Which tools Office can use: `all`, `read`, or a comma-separated list (see below) |
 | `BRIDGE_BROWSER` | this computer's Chrome | Extension `deviceId` to drive (see below) |
 | `BRIDGE_ORIGINS` | `https://pivot.claude.ai` | Allowed browser origins |
 | `BRIDGE_TOKEN` | `local/.token` | Override the bearer token |
@@ -82,16 +82,18 @@ Environment variables for `npm start`:
 
 ### Tool exposure
 
-`read` (the default) lets Claude open, read and move between pages but not act on them:
+`all` (the default) exposes every Claude in Chrome tool. Claude for Office asks you to approve
+each MCP tool call, and the extension asks before acting on a new site.
+
+To narrow it, `read` lets Claude open, read and move between pages but not act on them:
 `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `get_page_text`, `read_page`,
 `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_connected_browsers`.
-
-Tools that act on a page as you (`javascript_tool`, `form_input`, `computer`, `file_upload`,
-`upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`) and browser re-selection
-(`select_browser`, `switch_browser`) need `BRIDGE_TOOLS=all` or an explicit list, e.g.
+That leaves out tools that act on a page as you (`javascript_tool`, `form_input`, `computer`,
+`file_upload`, `upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`) and browser
+re-selection (`select_browser`, `switch_browser`). Or pass an explicit list:
 
 ```bash
-BRIDGE_TOOLS=all npm start
+BRIDGE_TOOLS=read npm start
 BRIDGE_TOOLS=tabs_context_mcp,tabs_create_mcp,navigate,get_page_text,form_input npm start
 ```
 
@@ -115,7 +117,7 @@ Controls in the bridge:
 - Every request needs the bearer token from `local/.token` (random 256-bit, mode 0600).
 - Requests with an `Origin` other than `https://pivot.claude.ai` are rejected, preflight included
   (stops other websites and DNS rebinding from driving your browser).
-- Read-only tool set by default; page-acting tools are opt-in ([Tool exposure](#tool-exposure)).
+- Optional tool allowlist (`BRIDGE_TOOLS`), including inside `browser_batch` ([Tool exposure](#tool-exposure)).
 - Refuses to run with `CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks`, so the
   extension's per-site **Allow** prompt stays on.
 - Pins the session to this computer's Chrome ([Multiple browsers](#multiple-browsers)).
@@ -130,12 +132,12 @@ Controls in the bridge:
 | **Malware runs as you** | Yes, but it doesn't need the bridge: it can run `claude --claude-in-chrome-mcp` or use the extension's local socket directly. |
 | **TLS private key leaks** | No. The cert is valid only for `localhost` / `127.0.0.1`, is `CA:FALSE` and server-auth only, so it can't mint certs for other sites. Worst case: something local impersonates the bridge while it is stopped to capture the token. Regenerate with `npm run cert -- --force`. |
 | **Your Claude account is compromised** | Yes, every Chrome connected to the account, through Anthropic's relay, with or without this bridge. Protect the account and remove browsers you don't recognise in the extension. |
-| **Prompt injection**: a document or web page tells Claude to misuse the browser | This is the realistic risk. Limited by the read-only default, the per-site Allow prompt, and what your Chrome profile is logged into. |
+| **Prompt injection**: a document or web page tells Claude to misuse the browser | This is the realistic risk. Limited by approving each tool call in Office, the per-site Allow prompt, `BRIDGE_TOOLS=read` if you want it, and what your Chrome profile is logged into. |
 
 Recommendations:
 
 - Use a **separate Chrome profile** for the extension, logged into only what you need.
-- Keep `BRIDGE_TOOLS=read` unless a task needs more; enable extra tools for that session only.
+- Read what each tool call will do before approving it in Office; use `BRIDGE_TOOLS=read` for sessions that only need to read pages.
 - Read Allow prompts; don't approve sites you didn't expect.
 - Run the bridge only while you need it.
 
