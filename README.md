@@ -143,17 +143,31 @@ Recommendations:
 
 ### Where the token lives
 
-`local/.token`, `local/manifest.xml`, the installed copies under
-`~/Library/Containers/com.microsoft.*/Data/Documents/wef/` (all mode 0600), and the Office
-add-in's own storage. In the manifest it sits in the URL **fragment**, which browsers never send
-to a server. Keep it out of terminals, logs and chat transcripts you share.
+- `local/.token` and `local/manifest.xml` (mode 0600)
+- The installed manifests under `~/Library/Containers/com.microsoft.*/Data/Documents/wef/` (mode 0600).
+  In the manifest it sits in the URL **fragment**, which browsers never send to a server.
+- **The add-in's WebView storage** (`~/Library/Containers/com.microsoft.*/Data/Library/WebKit/WebsiteData`).
+  The add-in saves each MCP registration there, **including its `Authorization` header**, and keeps
+  it after the manifest changes. Those copies are only protected by your macOS user account, the
+  same as the rest of your Office data.
 
-**Rotate the token:** `npm run rotate`, restart the bridge, then Cmd+Q and reopen Office.
+Keep the token out of terminals, logs and chat transcripts you share.
 
-The URL ends in a `<key-id>` derived from the token (first 12 hex chars of its SHA-256). The add-in
-stores each MCP registration, headers included, in its own WebView storage, so a new token on the
-same URL would keep sending the old one (`401` in the log). A new token means a new URL, which the
-add-in registers fresh. `/mcp` without a key id still works for local testing with curl.
+### Rotating the token
+
+`npm run rotate`, restart the bridge, then Cmd+Q and reopen Office.
+
+Because the add-in keeps saved registrations, a new token on the same URL would never reach it:
+Office would keep sending the old header and get `401`. So the URL ends in a `<key-id>`, the first
+12 hex characters of the token's SHA-256, and every token gets its own URL, which the add-in
+registers fresh.
+
+- **Old tokens stay in the add-in's storage after rotation, but they are dead.** The bridge only
+  accepts the current token, and their URLs return `404`. Removing them means clearing the add-in's
+  WebView storage, which also wipes your Claude chat history and skills in Office.
+- **The key id is not a secret.** It's a truncated hash, so it identifies a token but can't be
+  turned back into one, and it doesn't authenticate anything on its own.
+- `/mcp` without a key id still works for local testing with curl, with the current token.
 
 ## Troubleshooting
 
