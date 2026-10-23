@@ -51,7 +51,7 @@ npm start             # 2. start the bridge; first run generates local/.token (l
 
 # in a second terminal:
 npm run manifest      # 3. build local/manifest.xml with the bridge URL + token
-npm run install-addin # 4. sideload it into Word / Excel / PowerPoint
+npm run install-addin # 4. quit Office first; sideloads into Word / Excel / PowerPoint and clears Office's cached copy
 ```
 
 Then:
@@ -180,7 +180,7 @@ registers fresh.
 | *Load failed*, nothing in the log | Cert not trusted (`npm run cert`) or bridge not running |
 | Permission prompt never shows / times out | Session is on another computer's Chrome; see [Multiple browsers](#multiple-browsers) |
 | `401` in the log | The add-in is sending an old token, usually a stored registration for a URL without the current key id. `npm run manifest && npm run install-addin`, restart the bridge, Cmd+Q and reopen Office |
-| `stale key id in URL` in the log | Token was rotated but Office still has the old manifest loaded; Cmd+Q and reopen Office |
+| `stale key id in URL` in the log, or Office keeps calling an old URL | Office is using its cached manifest (`Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`, kept per add-in version). Quit Office, `npm run install-addin` (clears it), reopen |
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
 
