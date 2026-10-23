@@ -18,7 +18,7 @@
 //   CLAUDE_BIN       default `claude`
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:https'
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,10 +64,6 @@ function loadToken() {
   return readFileSync(file, 'utf8').trim()
 }
 const TOKEN = Buffer.from(loadToken())
-// The add-in stores MCP registrations (URL + headers) in its own WebView storage, so a
-// rotated token on an unchanged URL keeps sending the old header. A token-derived path
-// segment gives every token its own URL; must match scripts/build-manifest.mjs.
-const KEY_ID = createHash('sha256').update(TOKEN).digest('hex').slice(0, 12)
 
 const log = (...a) => console.error(new Date().toISOString(), '[bridge]', ...a)
 
@@ -236,10 +232,7 @@ const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }
   if (origin && !ORIGINS.has(origin)) { log('rejected origin', origin); return send(res, 403, { error: 'origin not allowed' }) }
   if (req.method === 'OPTIONS') return send(res, 204)
   const path = new URL(req.url, 'https://localhost').pathname
-  if (path !== '/mcp' && path !== `/mcp/${KEY_ID}`) {
-    if (path.startsWith('/mcp/')) log('stale key id in URL (token was rotated; reopen Office):', path)
-    return send(res, 404, { error: 'not found' })
-  }
+  if (path !== '/mcp') return send(res, 404, { error: 'not found' })
   if (!authorized(req)) { log('rejected unauthorized', req.method, origin || '-'); return send(res, 401, { error: 'unauthorized' }) }
   if (req.method === 'GET') return send(res, 405)        // no server-initiated stream
   if (req.method === 'DELETE') return send(res, 204)

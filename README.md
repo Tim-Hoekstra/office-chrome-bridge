@@ -4,7 +4,7 @@ Use **Claude in Chrome** from the **Claude for Word** add-in (also Excel and Pow
 
 The bridge runs `claude --claude-in-chrome-mcp` (Claude Code's built-in Claude in Chrome MCP
 server, which speaks stdio) and serves it as a Streamable HTTP MCP endpoint on
-`https://localhost:47823/mcp/<key-id>`. The add-in's `mcp_servers` setting points at that URL.
+`https://localhost:47823/mcp`. The add-in's `mcp_servers` setting points at that URL.
 
 ```
 Word taskpane (https://pivot.claude.ai, WebKit)
@@ -146,28 +146,22 @@ Recommendations:
 - `local/.token` and `local/manifest.xml` (mode 0600)
 - The installed manifests under `~/Library/Containers/com.microsoft.*/Data/Documents/wef/` (mode 0600).
   In the manifest it sits in the URL **fragment**, which browsers never send to a server.
-- **The add-in's WebView storage** (`~/Library/Containers/com.microsoft.*/Data/Library/WebKit/WebsiteData`).
-  The add-in saves each MCP registration there, **including its `Authorization` header**, and keeps
-  it after the manifest changes. Those copies are only protected by your macOS user account, the
-  same as the rest of your Office data.
+- **Office's manifest cache**
+  (`~/Library/Containers/com.microsoft.*/Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`).
+  Office copies the manifest here, token included, readable by other local users (mode 0644), and
+  keeps using it while the add-in version is unchanged. `npm run install-addin` deletes it.
+- Possibly **the add-in's WebView storage** (`.../Data/Library/WebKit/WebsiteData`), where it keeps
+  MCP registrations. Only your macOS user account protects it, the same as the rest of your Office data.
 
 Keep the token out of terminals, logs and chat transcripts you share.
 
 ### Rotating the token
 
-`npm run rotate`, restart the bridge, then Cmd+Q and reopen Office.
+Quit Office, `npm run rotate`, restart the bridge, then reopen Office.
 
-Because the add-in keeps saved registrations, a new token on the same URL would never reach it:
-Office would keep sending the old header and get `401`. So the URL ends in a `<key-id>`, the first
-12 hex characters of the token's SHA-256, and every token gets its own URL, which the add-in
-registers fresh.
-
-- **Old tokens stay in the add-in's storage after rotation, but they are dead.** The bridge only
-  accepts the current token, and their URLs return `404`. Removing them means clearing the add-in's
-  WebView storage, which also wipes your Claude chat history and skills in Office.
-- **The key id is not a secret.** It's a truncated hash, so it identifies a token but can't be
-  turned back into one, and it doesn't authenticate anything on its own.
-- `/mcp` without a key id still works for local testing with curl, with the current token.
+Office has to be closed: rotation reinstalls the manifest and clears Office's cached copy, and
+while Office runs it keeps serving (and can write back) the cached manifest with the old token,
+so its requests get `401`. Old tokens are dead once rotated; the bridge only accepts the current one.
 
 ## Troubleshooting
 
@@ -179,8 +173,8 @@ registers fresh.
 | Connector shows *Connection failed / Load failed*, only `OPTIONS` in the log | CORS preflight rejected; check `BRIDGE_ORIGINS` |
 | *Load failed*, nothing in the log | Cert not trusted (`npm run cert`) or bridge not running |
 | Permission prompt never shows / times out | Session is on another computer's Chrome; see [Multiple browsers](#multiple-browsers) |
-| `401` in the log | The add-in is sending an old token, usually a stored registration for a URL without the current key id. `npm run manifest && npm run install-addin`, restart the bridge, Cmd+Q and reopen Office |
-| `stale key id in URL` in the log, or Office keeps calling an old URL | Office is using its cached manifest (`Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`, kept per add-in version). Quit Office, `npm run install-addin` (clears it), reopen |
+| `401` in the log | Office is sending an old token from its cached manifest. Quit Office, `npm run install-addin` (clears the cache), restart the bridge if you rotated, reopen Office |
+| Office keeps calling an old URL or port | Office is using its cached manifest (`Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`, kept per add-in version). Quit Office, `npm run install-addin` (clears it), reopen |
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
 

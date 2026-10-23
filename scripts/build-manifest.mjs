@@ -5,7 +5,6 @@
 //
 //   node scripts/build-manifest.mjs            # from manifest/template.xml
 //   node scripts/build-manifest.mjs --fetch    # refresh the template from pivot.claude.ai first
-import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,10 +32,7 @@ if (!existsSync(tokenFile)) {
   process.exit(1)
 }
 const token = readFileSync(tokenFile, 'utf8').trim()
-// Token-derived path segment: the add-in caches registrations per URL, so a new token
-// needs a new URL to be picked up (see KEY_ID in src/bridge.mjs).
-const keyId = createHash('sha256').update(token).digest('hex').slice(0, 12)
-const url = `https://localhost:${PORT}/mcp/${keyId}`
+const url = `https://localhost:${PORT}/mcp`
 
 const query = new URLSearchParams({ allow_1p: '1' })
 const fragment = new URLSearchParams({
