@@ -232,7 +232,8 @@ const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }
   if (origin && !ORIGINS.has(origin)) { log('rejected origin', origin); return send(res, 403, { error: 'origin not allowed' }) }
   if (req.method === 'OPTIONS') return send(res, 204)
   const path = new URL(req.url, 'https://localhost').pathname
-  if (path !== '/mcp') return send(res, 404, { error: 'not found' })
+  // the token authenticates, not the path; sub-paths keep manifests from older builds working
+  if (path !== '/mcp' && !path.startsWith('/mcp/')) return send(res, 404, { error: 'not found' })
   if (!authorized(req)) { log('rejected unauthorized', req.method, origin || '-'); return send(res, 401, { error: 'unauthorized' }) }
   if (req.method === 'GET') return send(res, 405)        // no server-initiated stream
   if (req.method === 'DELETE') return send(res, 204)

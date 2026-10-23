@@ -51,7 +51,7 @@ npm start             # 2. start the bridge; first run generates local/.token (l
 
 # in a second terminal:
 npm run manifest      # 3. build local/manifest.xml with the bridge URL + token
-npm run install-addin # 4. quit Office first; sideloads into Word / Excel / PowerPoint and clears Office's cached copy
+npm run install-addin # 4. sideload it into Word / Excel / PowerPoint
 ```
 
 Then:
@@ -148,8 +148,8 @@ Recommendations:
   In the manifest it sits in the URL **fragment**, which browsers never send to a server.
 - **Office's manifest cache**
   (`~/Library/Containers/com.microsoft.*/Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`).
-  Office copies the manifest here, token included, readable by other local users (mode 0644), and
-  keeps using it while the add-in version is unchanged. `npm run install-addin` deletes it.
+  Office copies the manifest here each time it starts, token included, readable by other local
+  users (mode 0644).
 - Possibly **the add-in's WebView storage** (`.../Data/Library/WebKit/WebsiteData`), where it keeps
   MCP registrations. Only your macOS user account protects it, the same as the rest of your Office data.
 
@@ -157,11 +157,10 @@ Keep the token out of terminals, logs and chat transcripts you share.
 
 ### Rotating the token
 
-Quit Office, `npm run rotate`, restart the bridge, then reopen Office.
+`npm run rotate`, restart the bridge, then quit Office (Cmd+Q) and reopen it.
 
-Office has to be closed: rotation reinstalls the manifest and clears Office's cached copy, and
-while Office runs it keeps serving (and can write back) the cached manifest with the old token,
-so its requests get `401`. Old tokens are dead once rotated; the bridge only accepts the current one.
+Office only reads the manifest when it starts, so until it's fully restarted it keeps sending the
+old token and gets `401`. Old tokens are dead once rotated; the bridge only accepts the current one.
 
 ## Troubleshooting
 
@@ -173,8 +172,8 @@ so its requests get `401`. Old tokens are dead once rotated; the bridge only acc
 | Connector shows *Connection failed / Load failed*, only `OPTIONS` in the log | CORS preflight rejected; check `BRIDGE_ORIGINS` |
 | *Load failed*, nothing in the log | Cert not trusted (`npm run cert`) or bridge not running |
 | Permission prompt never shows / times out | Session is on another computer's Chrome; see [Multiple browsers](#multiple-browsers) |
-| `401` in the log | Office is sending an old token from its cached manifest. Quit Office, `npm run install-addin` (clears the cache), restart the bridge if you rotated, reopen Office |
-| Office keeps calling an old URL or port | Office is using its cached manifest (`Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`, kept per add-in version). Quit Office, `npm run install-addin` (clears it), reopen |
+| `401` in the log | Office is sending an old token. Restart the bridge if you rotated, then Cmd+Q and reopen Office so it reads the new manifest |
+| Office keeps calling an old URL or port | It hasn't re-read the manifest: `npm run install-addin`, then Cmd+Q and reopen Office |
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
 
