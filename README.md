@@ -74,6 +74,7 @@ Environment variables for `npm start`:
 | `BRIDGE_PORT` | `47823` | Rebuild + reinstall the manifest if you change it |
 | `BRIDGE_TOOLS` | `all` | Which tools Office can use: `all`, `read`, or a comma-separated list (see below) |
 | `BRIDGE_BROWSER` | this computer's Chrome | Extension `deviceId` to drive (see below) |
+| `BRIDGE_EVIDENCE_DIR` | `~/evidence` | The only folder `save_screenshot` writes to and `list_evidence`/`view_evidence` read from |
 | `BRIDGE_ORIGINS` | `https://pivot.claude.ai` | Allowed browser origins |
 | `BRIDGE_TOKEN` | `local/.token` | Override the bearer token |
 | `CLAUDE_CHROME_PERMISSION_MODE` | unset (extension default: ask) | Passed through to Claude in Chrome. `skip_all_permission_checks` is refused |
@@ -88,9 +89,10 @@ each MCP tool call, and the extension asks before acting on a new site.
 To narrow it, `read` lets Claude open, read and move between pages but not act on them:
 `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `get_page_text`, `read_page`,
 `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_connected_browsers`,
-`page_screenshot` (see [Screenshots](#screenshots)).
+`page_screenshot`, `list_evidence`, `view_evidence` (see [Screenshots and evidence](#screenshots-and-evidence)).
 That leaves out tools that act on a page as you (`javascript_tool`, `form_input`, `computer`,
-`file_upload`, `upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`) and browser
+`file_upload`, `upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`), `save_screenshot`
+(writes files), and browser
 re-selection (`select_browser`, `switch_browser`). Or pass an explicit list:
 
 ```bash
@@ -101,19 +103,35 @@ BRIDGE_TOOLS=tabs_context_mcp,tabs_create_mcp,navigate,get_page_text,form_input 
 Each action inside `browser_batch` is checked against the same list, so it can't be used to reach
 a tool that isn't allowed.
 
-### Screenshots
+### Screenshots and evidence
 
-The bridge adds its own tool, `page_screenshot`, which captures the tab Claude in Chrome is on
-(or a given `tabId`). It returns the image (so Claude can see the page), the page URL and title, and
-a link like `https://localhost:47823/shots/<id>.jpg` so Claude can insert the picture into the
-document: taskpane code fetches the link and passes the base64 bytes to e.g.
-`insertInlinePictureFromBase64`.
+With the default `all`, Claude can click, scroll, type, press keys and fill in forms in Chrome
+(`computer`, `form_input`, `find`/`read_page` to locate elements), so it can bring the evidence
+onto the screen before capturing it. The bridge adds four tools of its own:
 
-The link needs no bearer token (taskpane code doesn't have it): the random 128-bit id is the
-credential. It works once, expires after 5 minutes, is held in memory only (never written to disk),
-and is subject to the same origin check as `/mcp`. Ids are redacted from the log.
+| Tool | Does |
+|---|---|
+| `page_screenshot` | Captures the current tab (or `tabId`) and returns the image, page URL and title, and a one-time link |
+| `save_screenshot` | Same, and saves it as `<evidence folder>/<folder>/<name>-<timestamp>-<random>.jpg`, e.g. `~/evidence/5.1.3/weak-password-2026-10-26T01-02-03Z-3f9a1c.jpg`. Optional `ref` scrolls an element into view first; `region` crops to `[x0, y0, x1, y1]` |
+| `list_evidence` | Lists saved screenshots (whole evidence folder or one subfolder) |
+| `view_evidence` | Opens a saved screenshot so Claude can check it shows the issue, with a one-time link |
 
-Ask, for example: *"take a screenshot of the page in Chrome and insert it here with its URL as caption"*.
+The evidence folder is `~/evidence`, or `BRIDGE_EVIDENCE_DIR`. Use one per engagement:
+
+```bash
+BRIDGE_EVIDENCE_DIR=~/engagements/clientx/evidence npm start
+```
+
+The one-time link (`https://localhost:47823/shots/<id>.jpg`) lets Claude insert the picture into
+the document: taskpane code fetches it and passes the base64 bytes to e.g.
+`insertInlinePictureFromBase64`. See [SECURITY.md](SECURITY.md#screenshots-and-the-evidence-folder)
+for how links and the folder are protected.
+
+Ask, for example:
+
+> *For each finding heading in this document (e.g. 5.1.3 Weak password), check the issue in
+> Chrome, take a screenshot that shows it, save it to the evidence folder under the heading number,
+> view it to confirm it shows the issue, and insert it under the heading with the URL as caption.*
 
 ### Multiple browsers
 
@@ -126,56 +144,10 @@ Claude in Word to run `list_connected_browsers`.
 
 ## Security
 
-Controls in the bridge:
-
-- Binds `127.0.0.1` only and refuses to start on any other address.
-- Every request needs the bearer token from `local/.token` (random 256-bit, mode 0600).
-- Requests with an `Origin` other than `https://pivot.claude.ai` are rejected, preflight included
-  (stops other websites and DNS rebinding from driving your browser).
-- Optional tool allowlist (`BRIDGE_TOOLS`), including inside `browser_batch` ([Tool exposure](#tool-exposure)).
-- Refuses to run with `CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks`, so the
-  extension's per-site **Allow** prompt stays on.
-- Pins the session to this computer's Chrome ([Multiple browsers](#multiple-browsers)).
-
-### Threat model
-
-| If this happens | Can someone drive your browser? |
-|---|---|
-| **Token leaks**, attacker is remote (internet / LAN) | No. Nothing listens off loopback. |
-| **Token leaks**, attacker controls a website you visit | No. Browsers always send `Origin`; anything but `https://pivot.claude.ai` gets 403. |
-| **Token leaks**, another OS user on this computer | Yes, loopback is shared between local users. Rotate the token. |
-| **Malware runs as you** | Yes, but it doesn't need the bridge: it can run `claude --claude-in-chrome-mcp` or use the extension's local socket directly. |
-| **TLS private key leaks** | No. The cert is valid only for `localhost` / `127.0.0.1`, is `CA:FALSE` and server-auth only, so it can't mint certs for other sites. Worst case: something local impersonates the bridge while it is stopped to capture the token. Regenerate with `npm run cert -- --force`. |
-| **Your Claude account is compromised** | Yes, every Chrome connected to the account, through Anthropic's relay, with or without this bridge. Protect the account and remove browsers you don't recognise in the extension. |
-| **Prompt injection**: a document or web page tells Claude to misuse the browser | This is the realistic risk. Limited by approving each tool call in Office, the per-site Allow prompt, `BRIDGE_TOOLS=read` if you want it, and what your Chrome profile is logged into. |
-
-Recommendations:
-
-- Use a **separate Chrome profile** for the extension, logged into only what you need.
-- Read what each tool call will do before approving it in Office; use `BRIDGE_TOOLS=read` for sessions that only need to read pages.
-- Read Allow prompts; don't approve sites you didn't expect.
-- Run the bridge only while you need it.
-
-### Where the token lives
-
-- `local/.token` and `local/manifest.xml` (mode 0600)
-- The installed manifests under `~/Library/Containers/com.microsoft.*/Data/Documents/wef/` (mode 0600).
-  In the manifest it sits in the URL **fragment**, which browsers never send to a server.
-- **Office's manifest cache**
-  (`~/Library/Containers/com.microsoft.*/Data/Library/Application Support/Microsoft/Office/16.0/Wef/.../Manifests/<id>_<version>`).
-  Office copies the manifest here each time it starts, token included, readable by other local
-  users (mode 0644).
-- Possibly **the add-in's WebView storage** (`.../Data/Library/WebKit/WebsiteData`), where it keeps
-  MCP registrations. Only your macOS user account protects it, the same as the rest of your Office data.
-
-Keep the token out of terminals, logs and chat transcripts you share.
-
-### Rotating the token
-
-`npm run rotate`, restart the bridge, then quit Office (Cmd+Q) and reopen it.
-
-Office only reads the manifest when it starts, so until it's fully restarted it keeps sending the
-old token and gets `401`. Old tokens are dead once rotated; the bridge only accepts the current one.
+See [SECURITY.md](SECURITY.md) for the controls in the bridge, the threat model, where the token
+lives, the evidence folder and how to rotate the token. In short: localhost only, bearer token,
+origin pinned to `https://pivot.claude.ai`, Chrome's per-site Allow prompt stays on, files are
+written only inside the evidence folder, and you approve every tool call in Office.
 
 ## Troubleshooting
 
@@ -198,18 +170,20 @@ old token and gets `401`. Old tokens are dead once rotated; the bridge only acce
 npm run uninstall-addin                                   # removes the sideloaded manifest
 security delete-certificate -c 'localhost (office-chrome-bridge)' ~/Library/Keychains/login.keychain-db
 rm -rf local                                              # token, cert, manifest, logs
+# ~/evidence (or BRIDGE_EVIDENCE_DIR) holds your saved screenshots; delete it yourself when done
 ```
 
 ## Layout
 
 ```
-src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, page_screenshot)
+src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, screenshot + evidence tools)
 scripts/make-cert.sh       generate + trust the localhost TLS cert
 scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
 scripts/uninstall-addin.sh remove the sideloaded manifest
 scripts/rotate-token.sh    new token, rebuild + reinstall the manifest
 scripts/check-secrets.sh   fail if a token, key or secret file is tracked or in git history
+SECURITY.md                security controls, threat model, token and evidence-folder handling
 AGENTS.md                  instructions for coding agents (CLAUDE.md points here)
 manifest/template.xml      snapshot of Anthropic's add-in manifest (pivot.claude.ai/manifest.xml);
                            refresh with `node scripts/build-manifest.mjs --fetch`

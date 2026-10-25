@@ -2,7 +2,7 @@
 
 Localhost-only bridge that exposes Claude Code's Claude in Chrome MCP server
 (`claude --claude-in-chrome-mcp`, stdio) to the Claude for Office add-ins as a Streamable HTTP
-MCP server at `https://localhost:47823/mcp`. See `README.md` for setup and the threat model.
+MCP server at `https://localhost:47823/mcp`. See `README.md` for setup and `SECURITY.md` for the threat model.
 
 ## Before every commit and push: run the secret check
 
