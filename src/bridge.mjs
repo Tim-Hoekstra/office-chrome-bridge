@@ -33,7 +33,8 @@ const ORIGINS = new Set((process.env.BRIDGE_ORIGINS || 'https://pivot.claude.ai'
 // narrows it to reading pages and moving between them, without tools that act on a page
 // as you (javascript_tool, form_input, computer, file_upload, browser_batch, ...).
 const READ_TOOLS = ['tabs_context_mcp', 'tabs_create_mcp', 'tabs_close_mcp', 'navigate', 'get_page_text',
-  'read_page', 'find', 'read_console_messages', 'read_network_requests', 'resize_window', 'list_connected_browsers']
+  'read_page', 'find', 'read_console_messages', 'read_network_requests', 'resize_window', 'list_connected_browsers',
+  'page_screenshot']
 const TOOLS_SPEC = (process.env.BRIDGE_TOOLS || 'all').trim()
 const TOOLS = TOOLS_SPEC === 'all' ? null
   : new Set(TOOLS_SPEC === 'read' ? READ_TOOLS : TOOLS_SPEC.split(',').map(s => s.trim()).filter(Boolean))
@@ -42,6 +43,8 @@ const BROWSER = process.env.BRIDGE_BROWSER || null
 const BROWSER_TOOLS = new Set(['list_connected_browsers', 'select_browser', 'switch_browser'])
 const MAX_BODY = 10 * 1024 * 1024
 const CALL_TIMEOUT_MS = 5 * 60 * 1000
+const SHOT_TTL_MS = 5 * 60 * 1000
+const MAX_SHOTS = 20
 
 if (!['127.0.0.1', '::1', 'localhost'].includes(HOST)) {
   console.error(`refusing to bind ${HOST}: this bridge drives your logged-in browser and must stay on loopback`)
@@ -149,6 +152,53 @@ async function ensureLocalBrowser() {
   return null
 }
 
+// ---- page_screenshot: bridge-provided tool ------------------------------------------
+// Claude in Word sees an image block but can't copy its bytes into the document, so each
+// screenshot is also kept in memory behind a one-time, expiring link that taskpane code can
+// fetch and pass to insertInlinePictureFromBase64. The unguessable id is the credential:
+// that code has no access to the bearer token.
+const shots = new Map()        // id -> { buf, mime, timer }
+
+const SHOT_TOOL = {
+  name: 'page_screenshot',
+  description: 'Take a screenshot of the Chrome tab Claude in Chrome is on (or of tabId). Returns the image, the page ' +
+    'URL and title, and a one-time link (valid 5 minutes, works once) to the image file. To put the screenshot in ' +
+    'the document, fetch the link from Office.js code, base64-encode the bytes and insert them as a picture ' +
+    '(e.g. insertInlinePictureFromBase64 in Word).',
+  inputSchema: {
+    type: 'object',
+    properties: { tabId: { type: 'number', description: 'Tab to capture; default: the tab Claude in Chrome currently has selected' } },
+  },
+}
+
+const firstJson = r => { try { return JSON.parse(r.result?.content?.[0]?.text) } catch { return null } }
+const fail = text => ({ result: { content: [{ type: 'text', text: `page_screenshot: ${text}` }], isError: true } })
+
+function storeShot(buf, mime) {
+  if (shots.size >= MAX_SHOTS) dropShot(shots.keys().next().value)
+  const id = randomBytes(16).toString('base64url')
+  shots.set(id, { buf, mime, timer: setTimeout(() => dropShot(id), SHOT_TTL_MS) })
+  return id
+}
+function dropShot(id) { const s = shots.get(id); if (s) { clearTimeout(s.timer); shots.delete(id) } }
+
+async function pageScreenshot(args) {
+  const ctx = firstJson(await childRequest('tools/call', { name: 'tabs_context_mcp', arguments: {} }))
+  const tabId = args?.tabId ?? ctx?.selectedTabId
+  if (tabId === undefined) return fail('no tab to capture; open a page first (tabs_create_mcp / navigate)')
+  const r = await childRequest('tools/call', { name: 'computer', arguments: { action: 'screenshot', tabId } })
+  if (r.error) return r
+  const img = r.result?.content?.find(b => b.type === 'image')
+  if (r.result?.isError || !img) return { result: r.result }
+  const tab = ctx?.availableTabs?.find(t => t.tabId === tabId)
+  const ext = img.mimeType === 'image/png' ? 'png' : 'jpg'
+  const id = storeShot(Buffer.from(img.data, 'base64'), img.mimeType)
+  const link = `https://localhost:${PORT}/shots/${id}.${ext}`
+  return { result: { content: [img, { type: 'text', text:
+    `Screenshot of tab ${tabId}${tab ? `: "${tab.title}" (${tab.url})` : ''}\n` +
+    `Image file (${img.mimeType}, one-time link, expires in 5 minutes): ${link}` }] } }
+}
+
 // ---- JSON-RPC handling with tool allowlist ------------------------------------------
 async function handle(msg) {
   const isRequest = msg && msg.id !== undefined && msg.id !== null && typeof msg.method === 'string'
@@ -185,9 +235,12 @@ async function handle(msg) {
     if (problem) return reply({ result: { content: [{ type: 'text', text: problem }], isError: true } })
   }
   if (msg.method === 'tools/call' && msg.params?.name === 'select_browser') browserSelected = msg.params?.arguments?.deviceId || null
-  const r = await childRequest(msg.method, msg.params)
-  if (msg.method === 'tools/list' && TOOLS && r.result?.tools) {
-    r.result = { ...r.result, tools: r.result.tools.filter(t => TOOLS.has(t.name)) }
+  const r = msg.method === 'tools/call' && msg.params?.name === SHOT_TOOL.name
+    ? await pageScreenshot(msg.params?.arguments)
+    : await childRequest(msg.method, msg.params)
+  if (msg.method === 'tools/list' && r.result?.tools) {
+    const tools = [...r.result.tools, SHOT_TOOL]
+    r.result = { ...r.result, tools: TOOLS ? tools.filter(t => TOOLS.has(t.name)) : tools }
   }
   if (msg.method === 'tools/call') log('tools/call', msg.params?.name, r.error ? 'error' : r.result?.isError ? 'isError' : 'ok')
   return reply(r)
@@ -224,7 +277,7 @@ function send(res, status, body) {
 const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }, (req, res) => {
   cors(req, res)
   const origin = req.headers.origin
-  log(req.method, req.url, 'origin=' + (origin || '-'),
+  log(req.method, req.url.replace(/^\/shots\/[^?]*/, '/shots/<id>'), 'origin=' + (origin || '-'),
     req.method === 'OPTIONS'
       ? `acr-method=${req.headers['access-control-request-method'] || '-'} acr-headers=${req.headers['access-control-request-headers'] || '-'}`
       : `accept=${req.headers.accept || '-'} proto=${req.headers['mcp-protocol-version'] || '-'}`)
@@ -232,6 +285,16 @@ const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }
   if (origin && !ORIGINS.has(origin)) { log('rejected origin', origin); return send(res, 403, { error: 'origin not allowed' }) }
   if (req.method === 'OPTIONS') return send(res, 204)
   const path = new URL(req.url, 'https://localhost').pathname
+  // page_screenshot links: the one-time id authenticates (taskpane code has no bearer token)
+  const shot = req.method === 'GET' && path.match(/^\/shots\/([\w-]{22})\.(?:jpg|png)$/)
+  if (shot) {
+    const s = shots.get(shot[1])
+    if (!s) { log('shot not found or expired'); return send(res, 404, { error: 'not found' }) }
+    dropShot(shot[1])
+    log('shot served', s.buf.length, 'bytes')
+    res.writeHead(200, { 'Content-Type': s.mime, 'Content-Length': s.buf.length, 'Cache-Control': 'no-store' })
+    return res.end(s.buf)
+  }
   // the token authenticates, not the path; sub-paths keep manifests from older builds working
   if (path !== '/mcp' && !path.startsWith('/mcp/')) return send(res, 404, { error: 'not found' })
   if (!authorized(req)) { log('rejected unauthorized', req.method, origin || '-'); return send(res, 401, { error: 'unauthorized' }) }

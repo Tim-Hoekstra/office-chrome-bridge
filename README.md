@@ -87,7 +87,8 @@ each MCP tool call, and the extension asks before acting on a new site.
 
 To narrow it, `read` lets Claude open, read and move between pages but not act on them:
 `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `get_page_text`, `read_page`,
-`find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_connected_browsers`.
+`find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_connected_browsers`,
+`page_screenshot` (see [Screenshots](#screenshots)).
 That leaves out tools that act on a page as you (`javascript_tool`, `form_input`, `computer`,
 `file_upload`, `upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`) and browser
 re-selection (`select_browser`, `switch_browser`). Or pass an explicit list:
@@ -99,6 +100,20 @@ BRIDGE_TOOLS=tabs_context_mcp,tabs_create_mcp,navigate,get_page_text,form_input 
 
 Each action inside `browser_batch` is checked against the same list, so it can't be used to reach
 a tool that isn't allowed.
+
+### Screenshots
+
+The bridge adds its own tool, `page_screenshot`, which captures the tab Claude in Chrome is on
+(or a given `tabId`). It returns the image (so Claude can see the page), the page URL and title, and
+a link like `https://localhost:47823/shots/<id>.jpg` so Claude can insert the picture into the
+document: taskpane code fetches the link and passes the base64 bytes to e.g.
+`insertInlinePictureFromBase64`.
+
+The link needs no bearer token (taskpane code doesn't have it): the random 128-bit id is the
+credential. It works once, expires after 5 minutes, is held in memory only (never written to disk),
+and is subject to the same origin check as `/mcp`. Ids are redacted from the log.
+
+Ask, for example: *"take a screenshot of the page in Chrome and insert it here with its URL as caption"*.
 
 ### Multiple browsers
 
@@ -188,7 +203,7 @@ rm -rf local                                              # token, cert, manifes
 ## Layout
 
 ```
-src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning)
+src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, page_screenshot)
 scripts/make-cert.sh       generate + trust the localhost TLS cert
 scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
