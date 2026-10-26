@@ -15,7 +15,7 @@
 //   BRIDGE_BROWSER   deviceId to drive; default: the one connected browser on this computer
 //                    (several Chromes can be connected to one Claude account, incl. other PCs)
 //   BRIDGE_EVIDENCE_DIR  default ~/evidence: the only folder save_screenshot writes to and
-//                    list_evidence / view_evidence read from
+//                    list_evidence reads from
 //   BRIDGE_ALLOW_SKIP_PERMISSIONS=1  permit CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks
 //   CLAUDE_BIN       default `claude`
 import { spawn } from 'node:child_process'
@@ -23,7 +23,7 @@ import { createServer } from 'node:https'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const LOCAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'local')
@@ -37,7 +37,7 @@ const ORIGINS = new Set((process.env.BRIDGE_ORIGINS || 'https://pivot.claude.ai'
 // as you (javascript_tool, form_input, computer, file_upload, browser_batch, ...).
 const READ_TOOLS = ['tabs_context_mcp', 'tabs_create_mcp', 'tabs_close_mcp', 'navigate', 'get_page_text',
   'read_page', 'find', 'read_console_messages', 'read_network_requests', 'resize_window', 'list_connected_browsers',
-  'page_screenshot', 'list_evidence', 'view_evidence']
+  'page_screenshot', 'list_evidence']
 const TOOLS_SPEC = (process.env.BRIDGE_TOOLS || 'all').trim()
 const TOOLS = TOOLS_SPEC === 'all' ? null
   : new Set(TOOLS_SPEC === 'read' ? READ_TOOLS : TOOLS_SPEC.split(',').map(s => s.trim()).filter(Boolean))
@@ -46,10 +46,7 @@ const BROWSER = process.env.BRIDGE_BROWSER || null
 const BROWSER_TOOLS = new Set(['list_connected_browsers', 'select_browser', 'switch_browser'])
 const MAX_BODY = 10 * 1024 * 1024
 const CALL_TIMEOUT_MS = 5 * 60 * 1000
-const SHOT_TTL_MS = 5 * 60 * 1000
-const MAX_SHOTS = 20
 const EVIDENCE_DIR = resolve((process.env.BRIDGE_EVIDENCE_DIR || '~/evidence').replace(/^~(?=$|\/)/, homedir()))
-const MAX_EVIDENCE_READ = 15 * 1024 * 1024
 
 if (!['127.0.0.1', '::1', 'localhost'].includes(HOST)) {
   console.error(`refusing to bind ${HOST}: this bridge drives your logged-in browser and must stay on loopback`)
@@ -158,12 +155,9 @@ async function ensureLocalBrowser() {
 }
 
 // ---- bridge-provided tools: screenshots and the evidence folder ----------------------
-// Claude in Word sees an image block but can't copy its bytes into the document, so each
-// screenshot is also kept in memory behind a one-time, expiring link that taskpane code can
-// fetch and pass to insertInlinePictureFromBase64. The unguessable id is the credential:
-// that code has no access to the bearer token.
-const shots = new Map()        // id -> { buf, mime, timer }
-
+// Claude in Word sees an image block but can't copy its bytes into the document, and taskpane
+// code has no fetch or XMLHttpRequest to download them, so screenshots are saved to disk and
+// the user inserts them.
 const TAB_ID = { type: 'number', description: 'Tab to capture; default: the tab Claude in Chrome currently has selected' }
 const CAPTURE_PROPS = {
   tabId: TAB_ID,
@@ -171,16 +165,16 @@ const CAPTURE_PROPS = {
   region: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4,
     description: '(x0, y0, x1, y1) viewport region to capture instead of the whole tab, e.g. to crop to the evidence' },
 }
-const INSERT_HINT = 'To put an image in the document, fetch its one-time link (valid 5 minutes, works once) from ' +
-  'Office.js code, base64-encode the bytes and insert them as a picture (e.g. insertInlinePictureFromBase64 in Word).'
+const INSERT_HINT = 'You can\'t insert screenshots into the document (Office.js code here has no fetch or ' +
+  'XMLHttpRequest): give the user the saved path to insert with Insert > Pictures > Picture from File.'
 
 const OWN_TOOLS = {
   page_screenshot: {
     run: pageScreenshot,
     def: {
       name: 'page_screenshot',
-      description: 'Take a screenshot of the Chrome tab Claude in Chrome is on (or of tabId). Returns the image, the ' +
-        'page URL and title, and a one-time link to the image file. ' + INSERT_HINT,
+      description: 'Take a screenshot of the Chrome tab Claude in Chrome is on (or of tabId). Returns the image and ' +
+        'the page URL and title; nothing is saved. ' + INSERT_HINT,
       inputSchema: { type: 'object', properties: CAPTURE_PROPS },
     },
   },
@@ -191,7 +185,7 @@ const OWN_TOOLS = {
       description: `Take a screenshot of the Chrome tab and save it in the evidence folder (${EVIDENCE_DIR}), e.g. ` +
         'folder "5.1.3" for finding 5.1.3. Click, scroll or zoom with the computer tool first so the evidence is ' +
         'visible, or pass ref/region. Files are never overwritten: a timestamp and random suffix are added to the name. Returns the image ' +
-        '(check it shows the issue), the saved path, the page URL and a one-time link. ' + INSERT_HINT,
+        '(check it shows the issue), the saved path and the page URL. ' + INSERT_HINT,
       inputSchema: {
         type: 'object',
         properties: {
@@ -212,30 +206,11 @@ const OWN_TOOLS = {
       inputSchema: { type: 'object', properties: { folder: { type: 'string', description: 'Subfolder, e.g. "5.1.3"; default: the whole evidence folder' } } },
     },
   },
-  view_evidence: {
-    run: viewEvidence,
-    local: true,
-    def: {
-      name: 'view_evidence',
-      description: 'Open a saved screenshot from the evidence folder to check it, by its path as list_evidence or ' +
-        'save_screenshot report it (e.g. "5.1.3/weak-password-2026-10-26T01-02-03Z-3f9a1c.jpg"). Returns the image and a ' +
-        'one-time link. ' + INSERT_HINT,
-      inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Path relative to the evidence folder' } }, required: ['path'] },
-    },
-  },
 }
 
 const firstJson = r => { try { return JSON.parse(r.result?.content?.[0]?.text) } catch { return null } }
 const text = t => ({ type: 'text', text: t })
 const failure = (tool, t) => ({ result: { content: [text(`${tool}: ${t}`)], isError: true } })
-
-function storeShot(buf, mime) {
-  if (shots.size >= MAX_SHOTS) dropShot(shots.keys().next().value)
-  const id = randomBytes(16).toString('base64url')
-  shots.set(id, { buf, mime, timer: setTimeout(() => dropShot(id), SHOT_TTL_MS) })
-  return `https://localhost:${PORT}/shots/${id}.${mime === 'image/png' ? 'png' : 'jpg'}`
-}
-function dropShot(id) { const s = shots.get(id); if (s) { clearTimeout(s.timer); shots.delete(id) } }
 
 // Capture a tab through the child's computer tool; returns { img, tabId, tab } or { problem }
 async function capture(args) {
@@ -258,8 +233,7 @@ const describeTab = c => `tab ${c.tabId}${c.tab ? `: "${c.tab.title}" (${c.tab.u
 async function pageScreenshot(args) {
   const c = await capture(args)
   if (c.problem) return c.problem
-  const link = storeShot(Buffer.from(c.img.data, 'base64'), c.img.mimeType)
-  return { result: { content: [c.img, text(`Screenshot of ${describeTab(c)}\nImage file (${c.img.mimeType}, one-time link): ${link}`)] } }
+  return { result: { content: [c.img, text(`Screenshot of ${describeTab(c)}`)] } }
 }
 
 // ---- evidence folder: every path stays inside EVIDENCE_DIR -------------------------
@@ -301,10 +275,9 @@ async function saveScreenshot(args) {
   const file = join(dir, `${name}-${stamp}-${randomBytes(3).toString('hex')}.${ext}`)
   writeFileSync(file, buf, { flag: 'wx', mode: 0o600 })   // wx: never overwrite, never follow a planted symlink
   log('saved evidence', relative(root, file), buf.length, 'bytes')
-  const link = storeShot(buf, c.img.mimeType)
   return { result: { content: [c.img, text(
     `Saved ${relative(root, file)} (${file}) from ${describeTab(c)} at ${new Date().toISOString()}\n` +
-    `Image file (${c.img.mimeType}, one-time link): ${link}`)] } }
+    INSERT_HINT)] } }
 }
 
 async function listEvidence(args) {
@@ -323,22 +296,6 @@ async function listEvidence(args) {
   }
   walk(dir)
   return { result: { content: [text(out.length ? out.join('\n') : `no screenshots in ${relative(root, dir) || EVIDENCE_DIR}`)] } }
-}
-
-async function viewEvidence(args) {
-  const raw = String(args?.path ?? '').trim()
-  const mime = IMAGE_EXT[extname(raw).toLowerCase()]
-  if (!mime) return failure('view_evidence', `"${raw}" is not a .jpg or .png file`)
-  const { root, dir } = evidenceDir(dirname(raw) === '.' ? '' : dirname(raw), false)
-  const name = basename(raw)
-  if (!SEGMENT.test(name)) return failure('view_evidence', `invalid file name "${name}"`)
-  const file = realpathSync(join(dir, name))
-  if (!file.startsWith(root + sep) || !statSync(file).isFile()) return failure('view_evidence', `"${raw}" is not a file inside the evidence folder`)
-  if (statSync(file).size > MAX_EVIDENCE_READ) return failure('view_evidence', `"${raw}" is larger than ${MAX_EVIDENCE_READ} bytes`)
-  const buf = readFileSync(file)
-  const link = storeShot(buf, mime)
-  return { result: { content: [{ type: 'image', data: buf.toString('base64'), mimeType: mime },
-    text(`${relative(root, file)} (${buf.length} bytes)\nImage file (${mime}, one-time link): ${link}`)] } }
 }
 
 async function runOwnTool(name, args) {
@@ -424,7 +381,7 @@ function send(res, status, body) {
 const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }, (req, res) => {
   cors(req, res)
   const origin = req.headers.origin
-  log(req.method, req.url.replace(/^\/shots\/[^?]*/, '/shots/<id>'), 'origin=' + (origin || '-'),
+  log(req.method, req.url, 'origin=' + (origin || '-'),
     req.method === 'OPTIONS'
       ? `acr-method=${req.headers['access-control-request-method'] || '-'} acr-headers=${req.headers['access-control-request-headers'] || '-'}`
       : `accept=${req.headers.accept || '-'} proto=${req.headers['mcp-protocol-version'] || '-'}`)
@@ -432,16 +389,6 @@ const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }
   if (origin && !ORIGINS.has(origin)) { log('rejected origin', origin); return send(res, 403, { error: 'origin not allowed' }) }
   if (req.method === 'OPTIONS') return send(res, 204)
   const path = new URL(req.url, 'https://localhost').pathname
-  // page_screenshot links: the one-time id authenticates (taskpane code has no bearer token)
-  const shot = req.method === 'GET' && path.match(/^\/shots\/([\w-]{22})\.(?:jpg|png)$/)
-  if (shot) {
-    const s = shots.get(shot[1])
-    if (!s) { log('shot not found or expired'); return send(res, 404, { error: 'not found' }) }
-    dropShot(shot[1])
-    log('shot served', s.buf.length, 'bytes')
-    res.writeHead(200, { 'Content-Type': s.mime, 'Content-Length': s.buf.length, 'Cache-Control': 'no-store' })
-    return res.end(s.buf)
-  }
   // the token authenticates, not the path; sub-paths keep manifests from older builds working
   if (path !== '/mcp' && !path.startsWith('/mcp/')) return send(res, 404, { error: 'not found' })
   if (!authorized(req)) { log('rejected unauthorized', req.method, origin || '-'); return send(res, 401, { error: 'unauthorized' }) }

@@ -42,15 +42,9 @@ list) removes clicking, typing and file saving when a session only needs to read
   existing files are never overwritten and a symlink planted at the target name isn't followed.
 - Directories are created mode 0700.
 
-**Reads** (`list_evidence`, `view_evidence`) use the same path rules, only `.jpg`/`.jpeg`/`.png`
-files up to 15 MB, so Claude can't read other files through them. `view_evidence` sends the image
-to Claude (and the add-in) like any screenshot.
-
-**One-time links** (`https://localhost:47823/shots/<id>.jpg`) let taskpane code insert a
-screenshot into the document. They take no bearer token, because code Claude writes in the taskpane
-doesn't have it; the random 128-bit id is the credential. A link works once, expires after 5
-minutes, and the image is held in memory only (at most 20 at a time). The origin check applies as
-for `/mcp`. Ids are redacted from the log.
+**Reads**: `list_evidence` uses the same path rules and returns only the names, sizes and dates of
+`.jpg`/`.jpeg`/`.png` files. No tool reads a saved file back, and the bridge serves nothing outside
+`/mcp`, where every request needs the bearer token.
 
 The evidence itself (screenshots of client systems, possibly with credentials or personal data on
 screen) is as sensitive as the rest of your engagement data: keep the folder on an encrypted disk,
@@ -64,7 +58,6 @@ deletes evidence.
 | **Token leaks**, attacker is remote (internet / LAN) | No. Nothing listens off loopback. |
 | **Token leaks**, attacker controls a website you visit | No. Browsers always send `Origin`; anything but `https://pivot.claude.ai` gets 403. |
 | **Token leaks**, another OS user on this computer | Yes, loopback is shared between local users. Rotate the token. |
-| **A one-time screenshot link leaks** | Only that one image, once, within 5 minutes, and only if it hasn't been fetched yet. It gives no access to `/mcp` or to the evidence folder. |
 | **Malware runs as you** | Yes, but it doesn't need the bridge: it can run `claude --claude-in-chrome-mcp` or use the extension's local socket directly, and read `~/evidence` itself. |
 | **TLS private key leaks** | No. The cert is valid only for `localhost` / `127.0.0.1`, is `CA:FALSE` and server-auth only, so it can't mint certs for other sites. Worst case: something local impersonates the bridge while it is stopped to capture the token. Regenerate with `npm run cert -- --force`. |
 | **Your Claude account is compromised** | Yes, every Chrome connected to the account, through Anthropic's relay, with or without this bridge. Protect the account and remove browsers you don't recognise in the extension. |
