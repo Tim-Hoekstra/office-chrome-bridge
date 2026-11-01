@@ -74,7 +74,7 @@ Environment variables for `npm start`:
 | `BRIDGE_PORT` | `47823` | Rebuild + reinstall the manifest if you change it |
 | `BRIDGE_TOOLS` | `all` | Which tools Office can use: `all`, `read`, or a comma-separated list (see below) |
 | `BRIDGE_BROWSER` | this computer's Chrome | Extension `deviceId` to drive (see below) |
-| `BRIDGE_EVIDENCE_DIR` | `~/evidence` | The only folder `save_screenshot` writes to and `list_evidence` reads from |
+| `BRIDGE_SCREENSHOT_DIR` | `~/Downloads` | The only folder `save_screenshot` writes to and `list_screenshots` reads from |
 | `BRIDGE_ORIGINS` | `https://pivot.claude.ai` | Allowed browser origins |
 | `BRIDGE_TOKEN` | `local/.token` | Override the bearer token |
 | `CLAUDE_CHROME_PERMISSION_MODE` | unset (extension default: ask) | Passed through to Claude in Chrome. `skip_all_permission_checks` is refused |
@@ -89,7 +89,7 @@ each MCP tool call, and the extension asks before acting on a new site.
 To narrow it, `read` lets Claude open, read and move between pages but not act on them:
 `tabs_context_mcp`, `tabs_create_mcp`, `tabs_close_mcp`, `navigate`, `get_page_text`, `read_page`,
 `find`, `read_console_messages`, `read_network_requests`, `resize_window`, `list_connected_browsers`,
-`page_screenshot`, `list_evidence` (see [Screenshots and evidence](#screenshots-and-evidence)).
+`page_screenshot`, `list_screenshots` (see [Screenshots](#screenshots)).
 That leaves out tools that act on a page as you (`javascript_tool`, `form_input`, `computer`,
 `file_upload`, `upload_image`, `shortcuts_execute`, `browser_batch`, `gif_creator`), `save_screenshot`
 (writes files), and browser
@@ -103,33 +103,33 @@ BRIDGE_TOOLS=tabs_context_mcp,tabs_create_mcp,navigate,get_page_text,form_input 
 Each action inside `browser_batch` is checked against the same list, so it can't be used to reach
 a tool that isn't allowed.
 
-### Screenshots and evidence
+### Screenshots
 
 With the default `all`, Claude can click, scroll, type, press keys and fill in forms in Chrome
-(`computer`, `form_input`, `find`/`read_page` to locate elements), so it can bring the evidence
+(`computer`, `form_input`, `find`/`read_page` to locate elements), so it can bring what matters
 onto the screen before capturing it. The bridge adds three tools of its own:
 
 | Tool | Does |
 |---|---|
 | `page_screenshot` | Captures the current tab (or `tabId`) and returns the image, page URL and title, without saving it |
-| `save_screenshot` | Same, and saves it as `<evidence folder>/<folder>/<name>-<timestamp>-<random>.jpg`, e.g. `~/evidence/5.1.3/weak-password-2026-10-26T01-02-03Z-3f9a1c.jpg`. Optional `ref` scrolls an element into view first; `region` crops to `[x0, y0, x1, y1]` |
-| `list_evidence` | Lists saved screenshots (whole evidence folder or one subfolder) |
+| `save_screenshot` | Same, and saves it as `<screenshots folder>/<name>-<timestamp>-<random>.jpg`, e.g. `~/Downloads/weak-password-2026-10-26T01-02-03Z-3f9a1c.jpg`. Optional `folder` saves into a subfolder instead (e.g. `~/Downloads/5.1.3/...`) when you ask for one. Optional `ref` scrolls an element into view first; `region` crops to `[x0, y0, x1, y1]` |
+| `list_screenshots` | Lists saved screenshots (whole screenshots folder or one subfolder) |
 
-The evidence folder is `~/evidence`, or `BRIDGE_EVIDENCE_DIR`. Use one per engagement:
+The screenshots folder is `~/Downloads`, or `BRIDGE_SCREENSHOT_DIR`. Use one per engagement:
 
 ```bash
-BRIDGE_EVIDENCE_DIR=~/engagements/clientx/evidence npm start
+BRIDGE_SCREENSHOT_DIR=~/engagements/clientx/screenshots npm start
 ```
 
 Claude can't insert screenshots into the document: its Office.js code has no `fetch` or
 `XMLHttpRequest` to get the file. Insert them yourself with Insert → Pictures → Picture from File,
-using the path `save_screenshot` reports. See [SECURITY.md](SECURITY.md#screenshots-and-the-evidence-folder) for how the folder is
+using the path `save_screenshot` reports. See [SECURITY.md](SECURITY.md#the-screenshots-folder) for how the folder is
 protected.
 
 Ask, for example:
 
 > *For each finding heading in this document (e.g. 5.1.3 Weak password), check the issue in
-> Chrome, take a screenshot that shows it, save it to the evidence folder under the heading number,
+> Chrome, take a screenshot that shows it, save it to the screenshots folder under the heading number,
 > and list the saved paths so I can insert them.*
 
 ### Multiple browsers
@@ -144,9 +144,9 @@ Claude in Word to run `list_connected_browsers`.
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the controls in the bridge, the threat model, where the token
-lives, the evidence folder and how to rotate the token. In short: localhost only, bearer token,
+lives, the screenshots folder and how to rotate the token. In short: localhost only, bearer token,
 origin pinned to `https://pivot.claude.ai`, Chrome's per-site Allow prompt stays on, files are
-written only inside the evidence folder, and you approve every tool call in Office.
+written only inside the screenshots folder, and you approve every tool call in Office.
 
 ## Troubleshooting
 
@@ -169,20 +169,20 @@ written only inside the evidence folder, and you approve every tool call in Offi
 npm run uninstall-addin                                   # removes the sideloaded manifest
 security delete-certificate -c 'localhost (office-chrome-bridge)' ~/Library/Keychains/login.keychain-db
 rm -rf local                                              # token, cert, manifest, logs
-# ~/evidence (or BRIDGE_EVIDENCE_DIR) holds your saved screenshots; delete it yourself when done
+# saved screenshots are in ~/Downloads (or BRIDGE_SCREENSHOT_DIR); delete them yourself when done
 ```
 
 ## Layout
 
 ```
-src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, screenshot + evidence tools)
+src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, screenshot tools)
 scripts/make-cert.sh       generate + trust the localhost TLS cert
 scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
 scripts/uninstall-addin.sh remove the sideloaded manifest
 scripts/rotate-token.sh    new token, rebuild + reinstall the manifest
 scripts/check-secrets.sh   fail if a token, key or secret file is tracked or in git history
-SECURITY.md                security controls, threat model, token and evidence-folder handling
+SECURITY.md                security controls, threat model, token and screenshots-folder handling
 AGENTS.md                  instructions for coding agents (CLAUDE.md points here)
 manifest/template.xml      snapshot of Anthropic's add-in manifest (pivot.claude.ai/manifest.xml);
                            refresh with `node scripts/build-manifest.mjs --fetch`

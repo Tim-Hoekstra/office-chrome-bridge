@@ -14,8 +14,8 @@
 //   BRIDGE_TOOLS     `all` (default), `read` (read + navigate only), or a comma-separated list
 //   BRIDGE_BROWSER   deviceId to drive; default: the one connected browser on this computer
 //                    (several Chromes can be connected to one Claude account, incl. other PCs)
-//   BRIDGE_EVIDENCE_DIR  default ~/evidence: the only folder save_screenshot writes to and
-//                    list_evidence reads from
+//   BRIDGE_SCREENSHOT_DIR  default ~/Downloads: the only folder save_screenshot writes to and
+//                    list_screenshots reads from
 //   BRIDGE_ALLOW_SKIP_PERMISSIONS=1  permit CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks
 //   CLAUDE_BIN       default `claude`
 import { spawn } from 'node:child_process'
@@ -37,7 +37,7 @@ const ORIGINS = new Set((process.env.BRIDGE_ORIGINS || 'https://pivot.claude.ai'
 // as you (javascript_tool, form_input, computer, file_upload, browser_batch, ...).
 const READ_TOOLS = ['tabs_context_mcp', 'tabs_create_mcp', 'tabs_close_mcp', 'navigate', 'get_page_text',
   'read_page', 'find', 'read_console_messages', 'read_network_requests', 'resize_window', 'list_connected_browsers',
-  'page_screenshot', 'list_evidence']
+  'page_screenshot', 'list_screenshots']
 const TOOLS_SPEC = (process.env.BRIDGE_TOOLS || 'all').trim()
 const TOOLS = TOOLS_SPEC === 'all' ? null
   : new Set(TOOLS_SPEC === 'read' ? READ_TOOLS : TOOLS_SPEC.split(',').map(s => s.trim()).filter(Boolean))
@@ -46,7 +46,7 @@ const BROWSER = process.env.BRIDGE_BROWSER || null
 const BROWSER_TOOLS = new Set(['list_connected_browsers', 'select_browser', 'switch_browser'])
 const MAX_BODY = 10 * 1024 * 1024
 const CALL_TIMEOUT_MS = 5 * 60 * 1000
-const EVIDENCE_DIR = resolve((process.env.BRIDGE_EVIDENCE_DIR || '~/evidence').replace(/^~(?=$|\/)/, homedir()))
+const SCREENSHOT_DIR = resolve((process.env.BRIDGE_SCREENSHOT_DIR || '~/Downloads').replace(/^~(?=$|\/)/, homedir()))
 
 if (!['127.0.0.1', '::1', 'localhost'].includes(HOST)) {
   console.error(`refusing to bind ${HOST}: this bridge drives your logged-in browser and must stay on loopback`)
@@ -154,7 +154,7 @@ async function ensureLocalBrowser() {
   return null
 }
 
-// ---- bridge-provided tools: screenshots and the evidence folder ----------------------
+// ---- bridge-provided tools: screenshots and the screenshots folder ----------------------
 // Claude in Word sees an image block but can't copy its bytes into the document, and taskpane
 // code has no fetch or XMLHttpRequest to download them, so screenshots are saved to disk and
 // the user inserts them.
@@ -163,7 +163,7 @@ const CAPTURE_PROPS = {
   tabId: TAB_ID,
   ref: { type: 'string', description: 'Element reference (from read_page or find) to scroll into view before capturing' },
   region: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4,
-    description: '(x0, y0, x1, y1) viewport region to capture instead of the whole tab, e.g. to crop to the evidence' },
+    description: '(x0, y0, x1, y1) viewport region to capture instead of the whole tab, e.g. to crop to what matters' },
 }
 const INSERT_HINT = 'You can\'t insert screenshots into the document (Office.js code here has no fetch or ' +
   'XMLHttpRequest): give the user the saved path to insert with Insert > Pictures > Picture from File.'
@@ -182,28 +182,27 @@ const OWN_TOOLS = {
     run: saveScreenshot,
     def: {
       name: 'save_screenshot',
-      description: `Take a screenshot of the Chrome tab and save it in the evidence folder (${EVIDENCE_DIR}), e.g. ` +
-        'folder "5.1.3" for finding 5.1.3. Click, scroll or zoom with the computer tool first so the evidence is ' +
+      description: `Take a screenshot of the Chrome tab and save it in the screenshots folder (${SCREENSHOT_DIR}). ` +
+        'Pass folder (e.g. "5.1.3") only if the user asks for subfolders. Click, scroll or zoom with the computer tool first so what matters is ' +
         'visible, or pass ref/region. Files are never overwritten: a timestamp and random suffix are added to the name. Returns the image ' +
         '(check it shows the issue), the saved path and the page URL. ' + INSERT_HINT,
       inputSchema: {
         type: 'object',
         properties: {
-          folder: { type: 'string', description: 'Subfolder of the evidence folder, e.g. "5.1.3" or "client/5.1.3"; created if missing' },
+          folder: { type: 'string', description: 'Optional subfolder, only if the user asks for one, e.g. "5.1.3" or "client/5.1.3"; created if missing. Default: save directly in the screenshots folder' },
           name: { type: 'string', description: 'File name without extension, e.g. "weak-password-login" (default "screenshot")' },
           ...CAPTURE_PROPS,
         },
-        required: ['folder'],
       },
     },
   },
-  list_evidence: {
-    run: listEvidence,
+  list_screenshots: {
+    run: listScreenshots,
     local: true,
     def: {
-      name: 'list_evidence',
-      description: `List the screenshots saved in the evidence folder (${EVIDENCE_DIR}) or one of its subfolders.`,
-      inputSchema: { type: 'object', properties: { folder: { type: 'string', description: 'Subfolder, e.g. "5.1.3"; default: the whole evidence folder' } } },
+      name: 'list_screenshots',
+      description: `List the screenshots saved in the screenshots folder (${SCREENSHOT_DIR}) or one of its subfolders.`,
+      inputSchema: { type: 'object', properties: { folder: { type: 'string', description: 'Subfolder, e.g. "5.1.3"; default: the whole screenshots folder' } } },
     },
   },
 }
@@ -236,27 +235,27 @@ async function pageScreenshot(args) {
   return { result: { content: [c.img, text(`Screenshot of ${describeTab(c)}`)] } }
 }
 
-// ---- evidence folder: every path stays inside EVIDENCE_DIR -------------------------
+// ---- screenshots folder: every path stays inside SCREENSHOT_DIR ----------------------
 // Names are plain segments (no leading dot, no slashes, no `..`) and each directory is
 // resolved with realpath as it is walked, so a symlink can't lead outside the root.
 const SEGMENT = /^\w[\w .,()+-]*$/
 const IMAGE_EXT = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png' }
 
-function evidenceDir(folder, create) {
+function screenshotDir(folder, create) {
   const raw = String(folder ?? '').trim()
   const parts = raw.split('/').filter(Boolean)
   if (raw.startsWith('/') || raw.startsWith('~') || parts.some(p => !SEGMENT.test(p))) {
     throw new Error(`invalid folder "${raw}": use relative names like 5.1.3 or client/5.1.3 (no "..", "~", "/" prefix or dotfiles)`)
   }
-  if (create) mkdirSync(EVIDENCE_DIR, { recursive: true, mode: 0o700 })
-  if (!existsSync(EVIDENCE_DIR)) throw new Error(`evidence folder ${EVIDENCE_DIR} does not exist yet; save a screenshot first`)
-  const root = realpathSync(EVIDENCE_DIR)
+  if (create) mkdirSync(SCREENSHOT_DIR, { recursive: true, mode: 0o700 })
+  if (!existsSync(SCREENSHOT_DIR)) throw new Error(`screenshots folder ${SCREENSHOT_DIR} does not exist yet; save a screenshot first`)
+  const root = realpathSync(SCREENSHOT_DIR)
   let dir = root
   for (const p of parts) {
     const next = join(dir, p)
     if (create && !existsSync(next)) mkdirSync(next, { mode: 0o700 })
     dir = realpathSync(next)
-    if (!dir.startsWith(root + sep) || !statSync(dir).isDirectory()) throw new Error(`"${raw}" is not a folder inside the evidence folder`)
+    if (!dir.startsWith(root + sep) || !statSync(dir).isDirectory()) throw new Error(`"${raw}" is not a folder inside the screenshots folder`)
   }
   return { root, dir }
 }
@@ -264,24 +263,23 @@ function evidenceDir(folder, create) {
 async function saveScreenshot(args) {
   const name = String(args?.name ?? 'screenshot').trim().replace(/\.(jpe?g|png)$/i, '')
   if (!SEGMENT.test(name)) return failure('save_screenshot', `invalid name "${name}": letters, digits, spaces and . _ - , ( ) + only`)
-  if (!args?.folder) return failure('save_screenshot', 'folder is required, e.g. "5.1.3"')
   const c = await capture(args)
   if (c.problem) return c.problem
   const buf = Buffer.from(c.img.data, 'base64')
   const ext = c.img.mimeType === 'image/png' ? 'png' : 'jpg'
   const stamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '-')
-  const { root, dir } = evidenceDir(args.folder, true)
+  const { root, dir } = screenshotDir(args?.folder, true)
   // timestamp keeps files in capture order; the random suffix makes same-second names unique
   const file = join(dir, `${name}-${stamp}-${randomBytes(3).toString('hex')}.${ext}`)
   writeFileSync(file, buf, { flag: 'wx', mode: 0o600 })   // wx: never overwrite, never follow a planted symlink
-  log('saved evidence', relative(root, file), buf.length, 'bytes')
+  log('saved screenshot', relative(root, file), buf.length, 'bytes')
   return { result: { content: [c.img, text(
     `Saved ${relative(root, file)} (${file}) from ${describeTab(c)} at ${new Date().toISOString()}\n` +
     INSERT_HINT)] } }
 }
 
-async function listEvidence(args) {
-  const { root, dir } = evidenceDir(args?.folder, false)
+async function listScreenshots(args) {
+  const { root, dir } = screenshotDir(args?.folder, false)
   const out = []
   const walk = d => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
@@ -295,7 +293,7 @@ async function listEvidence(args) {
     }
   }
   walk(dir)
-  return { result: { content: [text(out.length ? out.join('\n') : `no screenshots in ${relative(root, dir) || EVIDENCE_DIR}`)] } }
+  return { result: { content: [text(out.length ? out.join('\n') : `no screenshots in ${relative(root, dir) || SCREENSHOT_DIR}`)] } }
 }
 
 async function runOwnTool(name, args) {
