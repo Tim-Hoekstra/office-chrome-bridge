@@ -2,7 +2,9 @@
 
 Localhost-only bridge that exposes Claude Code's Claude in Chrome MCP server
 (`claude --claude-in-chrome-mcp`, stdio) to the Claude for Office add-ins as a Streamable HTTP
-MCP server at `https://localhost:47823/mcp`. See `README.md` for setup and `SECURITY.md` for the threat model.
+MCP server at `https://localhost:47823/mcp`. Optionally (`BRIDGE_LLM_URL`) it is also the add-in's
+model gateway at `/v1`, translating the Anthropic Messages API to a local Ollama or
+OpenAI-compatible server (`src/llm.mjs`). See `README.md` for setup and `SECURITY.md` for the threat model.
 
 ## Before every commit and push: run the secret check
 
@@ -54,7 +56,23 @@ c -H "Authorization: Bearer $T" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call
 `local/bridge.log` logs every request (method, path, origin, preflight headers, tool calls). Check
 it first when Office reports a connector failure.
 
+After editing `src/llm.mjs`, start the bridge with `BRIDGE_LLM_URL` set and check both upstream
+formats (Ollama native and OpenAI-compatible), streaming and not:
+
+```bash
+c -X GET -H "x-api-key: $T" https://localhost:47823/v1/models
+c -H "Authorization: Bearer $T" https://localhost:47823/v1/messages \
+  -d '{"model":"claude-local/<name>","max_tokens":50,"stream":true,"messages":[{"role":"user","content":"hi"}]}'
+```
+
 ## Things that cost time before
+
+- **The add-in filters gateway models by name**: only ids containing "claude", "sonnet", "opus",
+  "haiku" or "anthropic" are shown, hence the `claude-local/` prefix in `src/llm.mjs`. It also
+  probes `POST /v1/messages` without `stream` (`max_tokens: 1`) before connecting, so both the
+  streaming and the plain JSON reply must work.
+- **Content blocks must start in index order** in the SSE stream: the add-in's SDK appends each
+  `content_block_start` to the message and ignores its `index`.
 
 - **Office reads the manifest only when it starts.** After `npm run install-addin` or
   `npm run rotate`, Word must be fully quit (Cmd+Q) and reopened. Until then it sends the old

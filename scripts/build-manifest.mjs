@@ -5,6 +5,9 @@
 //
 //   node scripts/build-manifest.mjs            # from manifest/template.xml
 //   node scripts/build-manifest.mjs --fetch    # refresh the template from pivot.claude.ai first
+//
+// With BRIDGE_LLM_URL set (the same variable the bridge reads), the bridge is also attached as
+// the add-in's model gateway, so the add-in can use a local model instead of Claude.ai.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,12 +36,15 @@ if (!existsSync(tokenFile)) {
 }
 const token = readFileSync(tokenFile, 'utf8').trim()
 const url = `https://localhost:${PORT}/mcp`
+const llm = Boolean((process.env.BRIDGE_LLM_URL || '').trim())
 
 const query = new URLSearchParams({ allow_1p: '1' })
 const fragment = new URLSearchParams({
   mcp_servers: JSON.stringify([
     { url, label: 'Claude in Chrome', headers: { Authorization: `Bearer ${token}` } },
   ]),
+  // the add-in appends /v1/models and /v1/messages to gateway_url
+  ...(llm && { gateway_url: `https://localhost:${PORT}`, gateway_token: token, gateway_auth_header: 'authorization' }),
 })
 const amp = s => s.replaceAll('&', '&amp;')   // XML attribute escaping
 
@@ -57,4 +63,4 @@ mkdirSync(LOCAL, { recursive: true, mode: 0o700 })
 writeFileSync(OUT, xml, { mode: 0o600 })
 chmodSync(OUT, 0o600)
 const version = xml.match(/<Version>([^<]+)<\/Version>/)?.[1]
-console.log(`wrote ${OUT} (add-in ${version}, bridge ${url}). It contains the bridge token: keep it private.`)
+console.log(`wrote ${OUT} (add-in ${version}, bridge ${url}, local model gateway ${llm ? 'on' : 'off'}). It contains the bridge token: keep it private.`)

@@ -18,6 +18,8 @@
 //                    list_screenshots reads from
 //   BRIDGE_ALLOW_SKIP_PERMISSIONS=1  permit CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks
 //   CLAUDE_BIN       default `claude`
+//   BRIDGE_LLM_URL   optional: a local Ollama or OpenAI-compatible server to offer the add-in as
+//                    its model (see src/llm.mjs for this and the other BRIDGE_LLM_* settings)
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:https'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -25,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSyn
 import { homedir } from 'node:os'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { handleLLM, llmDescription, llmEnabled } from './llm.mjs'
 
 const LOCAL = join(dirname(fileURLToPath(import.meta.url)), '..', 'local')
 const PORT = Number(process.env.BRIDGE_PORT || 47823)
@@ -364,9 +367,10 @@ function cors(req, res) {
   }
 }
 
+// The add-in sends the token as a bearer for MCP, and as a bearer or x-api-key for the model gateway
 function authorized(req) {
   const h = req.headers.authorization || ''
-  const got = Buffer.from(h.startsWith('Bearer ') ? h.slice(7).trim() : '')
+  const got = Buffer.from(h.startsWith('Bearer ') ? h.slice(7).trim() : String(req.headers['x-api-key'] || ''))
   return got.length === TOKEN.length && timingSafeEqual(got, TOKEN)
 }
 
@@ -387,9 +391,11 @@ const server = createServer({ cert: readFileSync(CERT), key: readFileSync(KEY) }
   if (origin && !ORIGINS.has(origin)) { log('rejected origin', origin); return send(res, 403, { error: 'origin not allowed' }) }
   if (req.method === 'OPTIONS') return send(res, 204)
   const path = new URL(req.url, 'https://localhost').pathname
+  const llm = llmEnabled && path.startsWith('/v1/')
   // the token authenticates, not the path; sub-paths keep manifests from older builds working
-  if (path !== '/mcp' && !path.startsWith('/mcp/')) return send(res, 404, { error: 'not found' })
+  if (path !== '/mcp' && !path.startsWith('/mcp/') && !llm) return send(res, 404, { error: 'not found' })
   if (!authorized(req)) { log('rejected unauthorized', req.method, origin || '-'); return send(res, 401, { error: 'unauthorized' }) }
+  if (llm) return handleLLM(req, res, path)
   if (req.method === 'GET') return send(res, 405)        // no server-initiated stream
   if (req.method === 'DELETE') return send(res, 204)
   if (req.method !== 'POST') return send(res, 405)
@@ -418,6 +424,7 @@ server.listen(PORT, HOST, () => {
   log(`listening on https://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}/mcp`)
   log(`origins: ${[...ORIGINS].join(', ')}  tools (${TOOLS_SPEC.includes(',') ? 'custom' : TOOLS_SPEC}): ${TOOLS ? [...TOOLS].join(', ') : 'all'}`)
   log(`chrome permission mode: ${process.env.CLAUDE_CHROME_PERMISSION_MODE || 'extension default (ask)'}`)
+  log(`local model gateway: ${llmEnabled ? llmDescription() : 'off (set BRIDGE_LLM_URL to enable)'}`)
 })
 const bye = () => { try { child.removeAllListeners('exit'); child.kill('SIGTERM') } catch {} ; process.exit(0) }
 process.on('SIGINT', bye)

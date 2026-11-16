@@ -7,7 +7,7 @@ disk. This page covers what protects that, what doesn't, and where secrets end u
 ## Controls in the bridge
 
 - Binds `127.0.0.1` only and refuses to start on any other address.
-- Every `/mcp` request needs the bearer token from `local/.token` (random 256-bit, mode 0600).
+- Every request (`/mcp`, and `/v1` when the local model gateway is on) needs the bearer token from `local/.token` (random 256-bit, mode 0600).
 - Requests with an `Origin` other than `https://pivot.claude.ai` are rejected, preflight included
   (stops other websites and DNS rebinding from driving your browser).
 - Optional tool allowlist (`BRIDGE_TOOLS`), including inside `browser_batch`
@@ -44,12 +44,28 @@ list) removes clicking, typing and file saving when a session only needs to read
 
 **Reads**: `list_screenshots` uses the same path rules and returns only the names, sizes and dates of
 `.jpg`/`.jpeg`/`.png` files. No tool reads a saved file back, and the bridge serves nothing outside
-`/mcp`, where every request needs the bearer token.
+`/mcp` (and `/v1` with the local model gateway on), where every request needs the bearer token.
 
 The screenshots themselves (images of client systems, possibly with credentials or personal data on
 screen) is as sensitive as the rest of your engagement data: keep the folder on an encrypted disk,
 use one folder per engagement, and delete it according to your retention rules. The bridge never
 deletes screenshots.
+
+## The local model gateway
+
+Off unless `BRIDGE_LLM_URL` is set ([Local models](README.md#local-models-ollama-openai-compatible-servers)).
+When the add-in is connected to it:
+
+- Everything the add-in would send to Claude goes to `BRIDGE_LLM_URL` instead: the document
+  content it reads, your prompts, tool results and screenshots. With a server on this machine
+  nothing leaves it. The bridge does not stop you pointing it at another host, so check the URL:
+  over plain `http://` to another machine, that content crosses the network unencrypted.
+- The `/v1` routes use the same token and origin check as `/mcp`. The token is also in the manifest
+  as `gateway_token`, in the URL fragment like the MCP entry.
+- The bridge logs model names and tool counts, never prompts or replies.
+- Local models are easier to steer with prompt injection than Claude, and the same Chrome tools are
+  attached. Approving each tool call in Office matters more here, and `BRIDGE_TOOLS=read` is worth
+  considering.
 
 ## Threat model
 

@@ -141,6 +141,64 @@ browser reported as running on this computer before the first browser action, an
 ambiguous. Set `BRIDGE_BROWSER` to pick one explicitly; IDs are in the error message, or ask
 Claude in Word to run `list_connected_browsers`.
 
+## Local models (Ollama, OpenAI-compatible servers)
+
+The bridge can also stand in for Claude: with `BRIDGE_LLM_URL` set, the add-in can use a model
+running on this machine instead of signing in to Claude.ai.
+
+```
+Word taskpane ── Anthropic Messages API ──► src/bridge.mjs ──► Ollama            /api/chat
+                 https://localhost:47823/v1   (src/llm.mjs)  or OpenAI-compatible /v1/chat/completions
+```
+
+The add-in only speaks the Anthropic Messages API to a gateway, so the bridge translates. There
+are two local formats and they are not the same:
+
+| Format | Servers | Routes |
+|---|---|---|
+| `ollama` | Ollama's native API | `/api/tags`, `/api/chat` (NDJSON stream) |
+| `openai` | LM Studio, llama.cpp server, vLLM, LocalAI, and Ollama's own `/v1` | `/v1/models`, `/v1/chat/completions` (SSE stream) |
+
+The bridge detects which one the server speaks: if `GET /api/version` answers it is Ollama,
+otherwise if `GET /v1/models` answers it is OpenAI-compatible.
+
+The address of the server is the only setting:
+
+```bash
+export BRIDGE_LLM_URL=localhost:11434           # Ollama; LM Studio is localhost:1234
+npm start                                       # in one terminal
+npm run manifest && npm run install-addin       # in another, with the same BRIDGE_LLM_URL set
+```
+
+Quit Office (Cmd+Q) and reopen it. On the connection screen, continue with the gateway, which is
+already filled in, and pick a model. To use Claude.ai again, sign out in the add-in, press
+**Back** on the connection screen and sign in with your Claude account. The manifest keeps both.
+Set `BRIDGE_LLM_URL` for `npm run rotate` too, or the rebuilt manifest drops the gateway.
+
+Everything else is optional:
+
+| Variable | Default | |
+|---|---|---|
+| `BRIDGE_LLM_URL` | unset (gateway off) | `host:port` of the local server (`http://` assumed), or a full URL |
+| `BRIDGE_LLM_FORMAT` | `auto` | Skip detection: `ollama` or `openai` |
+| `BRIDGE_LLM_MODEL` | first model listed | Used when the add-in asks for a model the server doesn't have, e.g. a small Claude model for chat titles |
+| `BRIDGE_LLM_NUM_CTX` | `32768`, or the model's maximum if smaller | Ollama only: context window (`num_ctx`) |
+| `BRIDGE_LLM_KEY` | unset | API key sent to the server as a bearer token, if it wants one |
+
+Things to know:
+
+- **Models are listed as `claude-local/<name>`.** The add-in hides every gateway model whose name
+  doesn't contain "claude". The prefix is only a label: the model is not Claude.
+- **Pick a model with tool calling and a large context window.** The add-in works by calling
+  tools (Office.js code, the Chrome tools) and sends a long system prompt. Ollama's own default
+  context is small and truncates that silently, so with Ollama the bridge asks for 32768 tokens
+  (less if the model's maximum is lower). That uses more memory than Ollama's default. With an
+  OpenAI-compatible server, set the context size in the server.
+- **Not passed on:** web search and code execution (they run on Anthropic's servers), extended
+  thinking, PDFs. Text, images, tool calls and tool results are translated. Images in tool
+  results (screenshots) reach the model only if it is a vision model.
+- Token counts shown by the add-in are estimates.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the controls in the bridge, the threat model, where the token
@@ -162,6 +220,9 @@ written only inside the screenshots folder, and you approve every tool call in O
 | Office keeps calling an old URL or port | It hasn't re-read the manifest: `npm run install-addin`, then Cmd+Q and reopen Office |
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
+| Gateway: "Gateway has no Claude models" | The local server lists no models (`ollama pull <model>`), or it isn't running: look for `[llm]` lines in the log |
+| Gateway: `404` on `/v1/models` in the log | The bridge was started without `BRIDGE_LLM_URL` |
+| Local model answers but ignores the document or never uses tools | The model doesn't support tool calling, or (OpenAI-compatible servers) its context window is too small |
 
 ## Uninstall
 
@@ -176,6 +237,7 @@ rm -rf local                                              # token, cert, manifes
 
 ```
 src/bridge.mjs             the bridge (HTTP ⇄ stdio MCP, auth, CORS, tool allowlist, browser pinning, screenshot tools)
+src/llm.mjs                optional local model gateway (Anthropic Messages API ⇄ Ollama or OpenAI-compatible)
 scripts/make-cert.sh       generate + trust the localhost TLS cert
 scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
