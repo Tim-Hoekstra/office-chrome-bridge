@@ -267,3 +267,8 @@ local/                     git-ignored: .token, certs/, manifest.xml, bridge.log
 - The sideloaded manifest uses the same add-in ID as the store version. Office updates or a new
   add-in version can override it; rerun `npm run manifest -- --fetch` and `npm run install-addin`.
 - The bridge must be running whenever you use the connector.
+- With a [local model](#local-models-ollama-openai-compatible-servers), that model does
+  everything: it edits the document and it drives Chrome. The add-in uses one model per session,
+  so there is no mode where a local model edits while Claude handles the browser.
+- A local model doesn't make the setup offline. The Chrome tools still need Claude Code and the
+  Chrome extension signed in to your Claude account.

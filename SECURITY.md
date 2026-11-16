@@ -63,9 +63,15 @@ When the add-in is connected to it:
 - The `/v1` routes use the same token and origin check as `/mcp`. The token is also in the manifest
   as `gateway_token`, in the URL fragment like the MCP entry.
 - The bridge logs model names and tool counts, never prompts or replies.
+- The local model does everything, including driving Chrome. The add-in uses one model per
+  session, so there is no mode where a local model edits the document while Claude handles the
+  browser: every Chrome tool call is the local model's decision.
 - Local models are easier to steer with prompt injection than Claude, and the same Chrome tools are
   attached. Approving each tool call in Office matters more here, and `BRIDGE_TOOLS=read` is worth
   considering.
+- A local model doesn't make the setup offline. The Chrome tools still need Claude Code and the
+  Chrome extension signed in to your Claude account, so that account stays part of the threat
+  model below.
 
 ## Threat model
 
