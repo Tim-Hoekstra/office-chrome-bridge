@@ -53,7 +53,7 @@ deletes screenshots.
 
 ## The local model gateway
 
-Off unless `BRIDGE_LLM_URL` is set ([Local models](README.md#local-models-ollama-openai-compatible-servers)).
+Off unless you turn it on with `npm run local-model` or `BRIDGE_LLM_URL` ([Local models](README.md#local-models-ollama-openai-compatible-servers)).
 When the add-in is connected to it:
 
 - Everything the add-in would send to Claude goes to `BRIDGE_LLM_URL` instead: the document

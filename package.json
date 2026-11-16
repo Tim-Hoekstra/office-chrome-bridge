@@ -12,6 +12,7 @@
     "install-addin": "scripts/install-addin.sh",
     "uninstall-addin": "scripts/uninstall-addin.sh",
     "rotate": "scripts/rotate-token.sh",
+    "local-model": "scripts/local-model.sh",
     "check-secrets": "scripts/check-secrets.sh"
   }
 }

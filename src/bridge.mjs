@@ -19,7 +19,8 @@
 //   BRIDGE_ALLOW_SKIP_PERMISSIONS=1  permit CLAUDE_CHROME_PERMISSION_MODE=skip_all_permission_checks
 //   CLAUDE_BIN       default `claude`
 //   BRIDGE_LLM_URL   optional: a local Ollama or OpenAI-compatible server to offer the add-in as
-//                    its model (see src/llm.mjs for this and the other BRIDGE_LLM_* settings)
+//                    its model; default: local/llm-url, written by `npm run local-model`
+//                    (see src/llm.mjs for this and the other BRIDGE_LLM_* settings)
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:https'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -424,7 +425,7 @@ server.listen(PORT, HOST, () => {
   log(`listening on https://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}/mcp`)
   log(`origins: ${[...ORIGINS].join(', ')}  tools (${TOOLS_SPEC.includes(',') ? 'custom' : TOOLS_SPEC}): ${TOOLS ? [...TOOLS].join(', ') : 'all'}`)
   log(`chrome permission mode: ${process.env.CLAUDE_CHROME_PERMISSION_MODE || 'extension default (ask)'}`)
-  log(`local model gateway: ${llmEnabled ? llmDescription() : 'off (set BRIDGE_LLM_URL to enable)'}`)
+  log(`local model gateway: ${llmEnabled ? llmDescription() : 'off (npm run local-model <host:port> to enable)'}`)
 })
 const bye = () => { try { child.removeAllListeners('exit'); child.kill('SIGTERM') } catch {} ; process.exit(0) }
 process.on('SIGINT', bye)

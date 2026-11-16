@@ -47,6 +47,7 @@ On Windows, do those two steps by hand (untested):
 cd office-chrome-bridge
 
 npm run cert          # 1. self-signed cert for localhost, trusted in your login keychain (asks for password)
+npm run local-model localhost:11434   # optional: also use a local model (Ollama here), see Local models
 npm start             # 2. start the bridge; first run generates local/.token (leave running, Ctrl+C stops)
 
 # in a second terminal:
@@ -162,24 +163,31 @@ are two local formats and they are not the same:
 The bridge detects which one the server speaks: if `GET /api/version` answers it is Ollama,
 otherwise if `GET /v1/models` answers it is OpenAI-compatible.
 
-The address of the server is the only setting:
+The address of the server is the only setting, given once:
 
 ```bash
-export BRIDGE_LLM_URL=localhost:11434           # Ollama; LM Studio is localhost:1234
-npm start                                       # in one terminal
-npm run manifest && npm run install-addin       # in another, with the same BRIDGE_LLM_URL set
+npm run local-model localhost:11434             # Ollama; LM Studio is localhost:1234
 ```
 
-Quit Office (Cmd+Q) and reopen it. On the connection screen, continue with the gateway, which is
-already filled in, and pick a model. To use Claude.ai again, sign out in the add-in, press
-**Back** on the connection screen and sign in with your Claude account. The manifest keeps both.
-Set `BRIDGE_LLM_URL` for `npm run rotate` too, or the rebuilt manifest drops the gateway.
+- **New install:** run it before `npm start`, as in [Install](#install). The rest of the install
+  is unchanged.
+- **Already installed:** run it at any time. It rebuilds and reinstalls the manifest for you; then
+  restart the bridge (Ctrl+C, `npm start`), quit Office (Cmd+Q) and reopen it. The token, cert and
+  Chrome connection stay as they are.
+- **Turn it off:** `npm run local-model off`, then restart the bridge and Office the same way.
+
+The address is saved in `local/llm-url`, so `npm start`, `npm run manifest` and `npm run rotate`
+all keep using it.
+
+In Office, on the connection screen, continue with the gateway, which is already filled in, and
+pick a model. To use Claude.ai again, sign out in the add-in, press **Back** on the connection
+screen and sign in with your Claude account. The manifest keeps both.
 
 Everything else is optional:
 
 | Variable | Default | |
 |---|---|---|
-| `BRIDGE_LLM_URL` | unset (gateway off) | `host:port` of the local server (`http://` assumed), or a full URL |
+| `BRIDGE_LLM_URL` | `local/llm-url` | Overrides the saved address for one run: `host:port` (`http://` assumed) or a full URL |
 | `BRIDGE_LLM_FORMAT` | `auto` | Skip detection: `ollama` or `openai` |
 | `BRIDGE_LLM_MODEL` | first model listed | Used when the add-in asks for a model the server doesn't have, e.g. a small Claude model for chat titles |
 | `BRIDGE_LLM_NUM_CTX` | `32768`, or the model's maximum if smaller | Ollama only: context window (`num_ctx`) |
@@ -221,7 +229,7 @@ written only inside the screenshots folder, and you approve every tool call in O
 | Claude says a tool is "not exposed by bridge" | Blocked by `BRIDGE_TOOLS`; see [Tool exposure](#tool-exposure) |
 | Bridge exits with "refusing to start with ... skip_all_permission_checks" | Unset `CLAUDE_CHROME_PERMISSION_MODE` |
 | Gateway: "Gateway has no Claude models" | The local server lists no models (`ollama pull <model>`), or it isn't running: look for `[llm]` lines in the log |
-| Gateway: `404` on `/v1/models` in the log | The bridge was started without `BRIDGE_LLM_URL` |
+| Gateway: `404` on `/v1/models` in the log | The bridge was started before `npm run local-model`: restart it |
 | Local model answers but ignores the document or never uses tools | The model doesn't support tool calling, or (OpenAI-compatible servers) its context window is too small |
 
 ## Uninstall
@@ -243,12 +251,13 @@ scripts/build-manifest.mjs build local/manifest.xml from manifest/template.xml
 scripts/install-addin.sh   sideload into Word / Excel / PowerPoint (macOS)
 scripts/uninstall-addin.sh remove the sideloaded manifest
 scripts/rotate-token.sh    new token, rebuild + reinstall the manifest
+scripts/local-model.sh     turn the local model gateway on or off (saves local/llm-url, rebuilds the manifest)
 scripts/check-secrets.sh   fail if a token, key or secret file is tracked or in git history
 SECURITY.md                security controls, threat model, token and screenshots-folder handling
 AGENTS.md                  instructions for coding agents (CLAUDE.md points here)
 manifest/template.xml      snapshot of Anthropic's add-in manifest (pivot.claude.ai/manifest.xml);
                            refresh with `node scripts/build-manifest.mjs --fetch`
-local/                     git-ignored: .token, certs/, manifest.xml, bridge.log
+local/                     git-ignored: .token, certs/, manifest.xml, bridge.log, llm-url
 ```
 
 ## Caveats

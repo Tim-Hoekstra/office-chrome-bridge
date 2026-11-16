@@ -11,10 +11,11 @@
 // The two are different formats. The format is detected from the server (see detect) unless
 // BRIDGE_LLM_FORMAT says which one to use.
 //
-// Env:
-//   BRIDGE_LLM_URL      address of the local server, e.g. localhost:11434 (Ollama) or
-//                       localhost:1234 (LM Studio). http:// is assumed. Unset: the gateway is off.
-//                       This is the only setting needed; the rest are optional.
+// The address of the local server, e.g. localhost:11434 (Ollama) or localhost:1234 (LM Studio),
+// is the only setting needed. `npm run local-model <address>` saves it in local/llm-url.
+//
+// Env (all optional):
+//   BRIDGE_LLM_URL      overrides local/llm-url. http:// is assumed. Neither set: the gateway is off.
 //   BRIDGE_LLM_FORMAT   `auto` (default), `ollama` or `openai`
 //   BRIDGE_LLM_MODEL    model to use when the add-in asks for one the server doesn't have
 //                       (default: the first model the server lists)
@@ -22,8 +23,12 @@
 //   BRIDGE_LLM_NUM_CTX  Ollama only: context window (num_ctx) to ask for. Default: 32768, or
 //                       the model's own maximum if that is smaller (see contextFor).
 import { randomBytes } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const RAW = (process.env.BRIDGE_LLM_URL || '').trim()
+const SAVED = join(dirname(fileURLToPath(import.meta.url)), '..', 'local', 'llm-url')
+const RAW = (process.env.BRIDGE_LLM_URL || (existsSync(SAVED) ? readFileSync(SAVED, 'utf8') : '')).trim()
 const BASE = (RAW && !/^\w+:\/\//.test(RAW) ? 'http://' + RAW : RAW).replace(/\/+$/, '').replace(/\/v1$/, '')
 const FORMAT = (process.env.BRIDGE_LLM_FORMAT || 'auto').trim().toLowerCase()
 const DEFAULT_MODEL = (process.env.BRIDGE_LLM_MODEL || '').trim()
@@ -42,7 +47,7 @@ export const llmEnabled = BASE !== ''
 export const llmDescription = () => `${BASE} (format: ${format || FORMAT})`
 
 if (llmEnabled) {
-  if (!/^https?:\/\//.test(BASE)) { console.error(`BRIDGE_LLM_URL must be host:port or an http(s) URL, got ${RAW}`); process.exit(1) }
+  if (!/^https?:\/\//.test(BASE)) { console.error(`BRIDGE_LLM_URL must be host:port or an http(s) URL, got ${RAW} (BRIDGE_LLM_URL or local/llm-url)`); process.exit(1) }
   if (!['auto', 'ollama', 'openai'].includes(FORMAT)) { console.error(`BRIDGE_LLM_FORMAT must be auto, ollama or openai, got ${FORMAT}`); process.exit(1) }
 }
 

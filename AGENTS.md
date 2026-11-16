@@ -56,7 +56,8 @@ c -H "Authorization: Bearer $T" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call
 `local/bridge.log` logs every request (method, path, origin, preflight headers, tool calls). Check
 it first when Office reports a connector failure.
 
-After editing `src/llm.mjs`, start the bridge with `BRIDGE_LLM_URL` set and check both upstream
+After editing `src/llm.mjs`, start the bridge with `BRIDGE_LLM_URL` set (or `local/llm-url`
+saved by `npm run local-model`) and check both upstream
 formats (Ollama native and OpenAI-compatible), streaming and not:
 
 ```bash

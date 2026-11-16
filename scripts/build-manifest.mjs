@@ -6,8 +6,9 @@
 //   node scripts/build-manifest.mjs            # from manifest/template.xml
 //   node scripts/build-manifest.mjs --fetch    # refresh the template from pivot.claude.ai first
 //
-// With BRIDGE_LLM_URL set (the same variable the bridge reads), the bridge is also attached as
-// the add-in's model gateway, so the add-in can use a local model instead of Claude.ai.
+// With a local model address set (BRIDGE_LLM_URL or local/llm-url, the same as the bridge reads),
+// the bridge is also attached as the add-in's model gateway, so the add-in can use a local model
+// instead of Claude.ai.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,7 +37,8 @@ if (!existsSync(tokenFile)) {
 }
 const token = readFileSync(tokenFile, 'utf8').trim()
 const url = `https://localhost:${PORT}/mcp`
-const llm = Boolean((process.env.BRIDGE_LLM_URL || '').trim())
+const llmFile = join(LOCAL, 'llm-url')
+const llm = Boolean((process.env.BRIDGE_LLM_URL || (existsSync(llmFile) ? readFileSync(llmFile, 'utf8') : '')).trim())
 
 const query = new URLSearchParams({ allow_1p: '1' })
 const fragment = new URLSearchParams({
