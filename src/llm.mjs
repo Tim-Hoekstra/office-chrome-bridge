@@ -26,6 +26,8 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 
 const SAVED = join(dirname(fileURLToPath(import.meta.url)), '..', 'local', 'llm-url')
 const RAW = (process.env.BRIDGE_LLM_URL || (existsSync(SAVED) ? readFileSync(SAVED, 'utf8') : '')).trim()
@@ -86,10 +88,27 @@ async function detect() {
   return format
 }
 
+// Ollama says what each model can do. The add-in works through tool calls, so models without
+// tool support are left out of the list. If Ollama doesn't report capabilities (older versions),
+// or the filter would leave nothing, every model is listed.
+const shown = new Map()        // model -> /api/show reply
+async function show(model) {
+  if (!shown.has(model)) {
+    try {
+      const r = await fetch(BASE + '/api/show', { method: 'POST', headers: upstreamHeaders(), body: JSON.stringify({ model }), signal: AbortSignal.timeout(DETECT_TIMEOUT_MS) })
+      if (r.ok) shown.set(model, await r.json())
+    } catch {}
+  }
+  return shown.get(model) || {}
+}
+
 async function listModels() {
   const f = await detect()
-  if (f === 'ollama') return ((await getJson('/api/tags')).models || []).map(m => m.name).filter(Boolean)
-  return ((await getJson('/v1/models')).data || []).map(m => m.id).filter(Boolean)
+  if (f !== 'ollama') return ((await getJson('/v1/models')).data || []).map(m => m.id).filter(Boolean)
+  const names = ((await getJson('/api/tags')).models || []).map(m => m.name).filter(Boolean)
+  const caps = await Promise.all(names.map(async n => (await show(n)).capabilities))
+  const withTools = names.filter((_, i) => !Array.isArray(caps[i]) || caps[i].includes('tools'))
+  return withTools.length ? withTools : names
 }
 
 // The add-in also asks for real Claude model names (e.g. a small model for chat titles).
@@ -110,12 +129,8 @@ const contexts = new Map()     // model -> num_ctx
 async function contextFor(model) {
   if (NUM_CTX > 0) return NUM_CTX
   if (!contexts.has(model)) {
-    let max
-    try {
-      const r = await fetch(BASE + '/api/show', { method: 'POST', headers: upstreamHeaders(), body: JSON.stringify({ model }), signal: AbortSignal.timeout(DETECT_TIMEOUT_MS) })
-      const info = r.ok ? (await r.json()).model_info || {} : {}
-      max = Number(Object.entries(info).find(([k]) => k.endsWith('.context_length'))?.[1])
-    } catch {}
+    const info = (await show(model)).model_info || {}
+    const max = Number(Object.entries(info).find(([k]) => k.endsWith('.context_length'))?.[1])
     contexts.set(model, max > 0 ? Math.min(max, DEFAULT_NUM_CTX) : DEFAULT_NUM_CTX)
     log(`${model}: num_ctx ${contexts.get(model)}${max > 0 ? ` (model maximum ${max})` : ''}`)
   }
@@ -266,19 +281,27 @@ async function* openAIEvents(stream) {
   yield { finish, input: usage?.prompt_tokens, output: usage?.completion_tokens }
 }
 
-async function upstream(body, signal) {
-  const f = await detect()
-  const model = await resolveModel(body.model)
-  const path = f === 'ollama' ? '/api/chat' : '/v1/chat/completions'
-  const r = await fetch(BASE + path, {
-    method: 'POST', headers: upstreamHeaders(), signal,
-    body: JSON.stringify(f === 'ollama' ? ollamaRequest(body, model, await contextFor(model)) : openAIRequest(body, model)),
+// POST without a time limit. fetch gives up when the server is silent for 5 minutes, and a
+// local model reading a long prompt on the CPU sends nothing until it has read all of it.
+function post(url, payload, signal) {
+  return new Promise((resolve, reject) => {
+    const req = (url.startsWith('https:') ? httpsRequest : httpRequest)(url, { method: 'POST', headers: upstreamHeaders(), signal }, resolve)
+    req.on('error', reject)
+    req.end(JSON.stringify(payload))
   })
-  if (!r.ok) {
-    const detail = (await r.text().catch(() => '')).slice(0, 2000)
-    throw new UpstreamError(r.status, `${f} server ${path} (model ${model}): HTTP ${r.status} ${detail}`)
+}
+
+async function upstream(body, model, signal) {
+  const f = await detect()
+  const path = f === 'ollama' ? '/api/chat' : '/v1/chat/completions'
+  const r = await post(BASE + path, f === 'ollama' ? ollamaRequest(body, model, await contextFor(model)) : openAIRequest(body, model), signal)
+  if (r.statusCode < 200 || r.statusCode >= 300) {
+    let detail = ''
+    for await (const chunk of r) { detail += chunk; if (detail.length > 2000) break }
+    r.destroy()
+    throw new UpstreamError(r.statusCode, `${f} server ${path} (model ${model}): HTTP ${r.statusCode} ${detail.slice(0, 2000)}`)
   }
-  return { model, events: f === 'ollama' ? ollamaEvents(r.body) : openAIEvents(r.body) }
+  return f === 'ollama' ? ollamaEvents(r) : openAIEvents(r)
 }
 
 // ---- events -> Anthropic response -----------------------------------------------------
@@ -310,20 +333,38 @@ const envelope = (requested, extra) => ({
   content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 0, output_tokens: 0 }, ...extra,
 })
 
+// Before connecting, the add-in sends each listed model a one-token test message and gives up on
+// it after 5 seconds. A local model that isn't loaded yet takes longer than that, and testing
+// every model makes the server load them one after another. So these probes are answered here:
+// they only show that the gateway route and the token work.
+const isProbe = body => body.max_tokens === 1 && !body.stream && !body.tools?.length
+
 async function messages(req, res, body) {
+  if (isProbe(body)) {
+    await resolveModel(body.model)      // still fails if the server is down or has no models
+    return sendJson(res, 200, envelope(body.model, { content: [{ type: 'text', text: '.' }], stop_reason: 'max_tokens', usage: { input_tokens: 1, output_tokens: 1 } }))
+  }
   const abort = new AbortController()
   res.on('close', () => { if (!res.writableEnded) abort.abort() })
-  const { model, events } = await upstream(body, abort.signal)
-  log(`messages ${body.model} -> ${model} (${format}) stream=${!!body.stream} tools=${toTools(body).length}`)
+  const model = await resolveModel(body.model)
+  const started = Date.now()
+  const size = Math.round(JSON.stringify(body).length / 1024)
+  log(`messages ${body.model} -> ${model} (${format}) stream=${!!body.stream} tools=${toTools(body).length} request=${size}KB: waiting for the model`)
+  const finished = d => log(`messages ${model}: ${d.stop_reason} after ${Math.round((Date.now() - started) / 1000)}s, ${d.usage.input_tokens} tokens in, ${d.usage.output_tokens} out`)
 
   if (!body.stream) {
-    return sendJson(res, 200, envelope(body.model, await collect(events)))
+    const done = await collect(await upstream(body, model, abort.signal))
+    finished(done)
+    return sendJson(res, 200, envelope(body.model, done))
   }
+  // The reply starts before the model does: a model reading a long prompt is silent for minutes,
+  // and without the pings the add-in's webview drops the idle connection and asks again.
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
   const emit = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`)
-  const ping = setInterval(() => emit('ping', {}), PING_MS)    // local models can take a while to load
+  const ping = setInterval(() => emit('ping', {}), PING_MS)
   try {
     emit('message_start', { message: envelope(body.model) })
+    const events = await upstream(body, model, abort.signal)
     // Text is streamed as it arrives. Each tool call is sent whole: the arguments are small,
     // and Ollama only delivers them whole anyway. Blocks must start in index order.
     let open = -1
@@ -340,8 +381,10 @@ async function messages(req, res, body) {
     closeText()
     emit('message_delta', { delta: { stop_reason: done.stop_reason, stop_sequence: null }, usage: done.usage })
     emit('message_stop', {})
+    finished(done)
   } catch (e) {
-    if (!abort.signal.aborted) { log('stream failed:', e.message); emit('error', { error: { type: 'api_error', message: e.message } }) }
+    if (abort.signal.aborted) log(`messages ${model}: the add-in closed the connection after ${Math.round((Date.now() - started) / 1000)}s`)
+    else { log('stream failed:', e.message); emit('error', { error: { type: 'api_error', message: e.message } }) }
   } finally {
     clearInterval(ping)
     res.end()

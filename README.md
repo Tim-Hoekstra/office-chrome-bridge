@@ -197,6 +197,10 @@ Things to know:
 
 - **Models are listed as `claude-local/<name>`.** The add-in hides every gateway model whose name
   doesn't contain "claude". The prefix is only a label: the model is not Claude.
+- **Only models with tool calling are listed** (Ollama reports this per model; other servers
+  list everything). A model that is listed can still fail to load on your hardware: the error
+  then shows in the chat and in the bridge log.
+- **The first reply after picking a model is slow** while the server loads it into memory.
 - **Pick a model with tool calling and a large context window.** The add-in works by calling
   tools (Office.js code, the Chrome tools) and sends a long system prompt. Ollama's own default
   context is small and truncates that silently, so with Ollama the bridge asks for 32768 tokens

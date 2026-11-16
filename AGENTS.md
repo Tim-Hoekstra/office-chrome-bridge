@@ -70,8 +70,9 @@ c -H "Authorization: Bearer $T" https://localhost:47823/v1/messages \
 
 - **The add-in filters gateway models by name**: only ids containing "claude", "sonnet", "opus",
   "haiku" or "anthropic" are shown, hence the `claude-local/` prefix in `src/llm.mjs`. It also
-  probes `POST /v1/messages` without `stream` (`max_tokens: 1`) before connecting, so both the
-  streaming and the plain JSON reply must work.
+  probes `POST /v1/messages` without `stream` (`max_tokens: 1`) for each listed model before
+  connecting, and aborts each probe after 5 seconds. A cold local model can't answer that fast,
+  so `src/llm.mjs` answers probes itself (`isProbe`) without calling the model.
 - **Content blocks must start in index order** in the SSE stream: the add-in's SDK appends each
   `content_block_start` to the message and ignores its `index`.
 
